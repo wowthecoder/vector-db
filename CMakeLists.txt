@@ -15,6 +15,7 @@ option(VECTORDB_BUILD_CLI "Build CLI" OFF)
 
 add_library(vectordb
     src/distance.cpp
+    src/indexes/flat_index.cpp
     src/vector_store.cpp
     src/collection.cpp
 )

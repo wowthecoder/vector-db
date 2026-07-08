@@ -1,17 +1,12 @@
 #pragma once
 
+#include "vectordb/types.hpp"
+
 #include <cstddef>
 #include <vector>
 
 namespace vectordb
 {
-
-    enum class Metric
-    {
-        L2,
-        Dot,
-        Cosine
-    };
 
     float l2_distance(const float *a, const float *b, std::size_t dim);
     float dot_product(const float *a, const float *b, std::size_t dim);

@@ -1,14 +1,13 @@
 #include "vectordb/collection.hpp"
 
-#include <algorithm>
 #include <stdexcept>
 
 namespace vectordb
 {
 
     Collection::Collection(std::size_t dim, Metric metric)
-        : metric_(metric),
-          vectors_(dim)
+        : vectors_(dim),
+          index_(vectors_, metric)
     {
     }
 
@@ -36,36 +35,17 @@ namespace vectordb
             throw std::invalid_argument("Query dimension does not match collection dimension");
         }
 
+        const auto internal_results = index_.search(query, top_k);
         std::vector<SearchResult> results;
-        results.reserve(size());
+        results.reserve(internal_results.size());
 
-        for (std::uint64_t internal_id = 0; internal_id < size(); ++internal_id)
+        for (const auto &result : internal_results)
         {
-            const float *candidate = vectors_.get(internal_id);
             results.push_back({
-                internal_to_external_.at(static_cast<std::size_t>(internal_id)),
-                internal_id,
-                score_vector(query.data(), candidate),
+                internal_to_external_.at(static_cast<std::size_t>(result.internal_id)),
+                result.internal_id,
+                result.score,
             });
-        }
-
-        const auto better = [this](const SearchResult &a, const SearchResult &b) {
-            if (a.score == b.score)
-            {
-                return a.internal_id < b.internal_id;
-            }
-
-            return higher_is_better() ? a.score > b.score : a.score < b.score;
-        };
-
-        if (top_k < results.size())
-        {
-            std::partial_sort(results.begin(), results.begin() + static_cast<std::ptrdiff_t>(top_k), results.end(), better);
-            results.resize(top_k);
-        }
-        else
-        {
-            std::sort(results.begin(), results.end(), better);
         }
 
         return results;
@@ -79,26 +59,6 @@ namespace vectordb
     std::size_t Collection::dim() const
     {
         return vectors_.dim();
-    }
-
-    float Collection::score_vector(const float *a, const float *b) const
-    {
-        switch (metric_)
-        {
-        case Metric::L2:
-            return l2_distance(a, b, dim());
-        case Metric::Dot:
-            return dot_product(a, b, dim());
-        case Metric::Cosine:
-            return cosine_similarity(a, b, dim());
-        }
-
-        throw std::invalid_argument("Unsupported metric");
-    }
-
-    bool Collection::higher_is_better() const
-    {
-        return metric_ == Metric::Dot || metric_ == Metric::Cosine;
     }
 
 }
