@@ -16,7 +16,7 @@ similarity.
 Configure and build from the repository root:
 
 ```sh
-cmake -S . -B build
+cmake -S . -B build -G Ninja
 cmake --build build
 ```
 

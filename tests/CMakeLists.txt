@@ -15,7 +15,9 @@ endif()
 include(GoogleTest)
 
 add_executable(vectordb_tests
-    vector_db_tests.cpp
+    collection_tests.cpp
+    distance_tests.cpp
+    vector_store_tests.cpp
 )
 
 target_link_libraries(vectordb_tests
