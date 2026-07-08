@@ -8,6 +8,8 @@ similarity.
 
 - CMake 3.22 or newer
 - A C++20 compiler such as GCC, Clang, or MSVC
+- GoogleTest development package discoverable by CMake, or network access during
+  CMake configure so it can be fetched automatically
 
 ## Build
 
@@ -18,8 +20,10 @@ cmake -S . -B build
 cmake --build build
 ```
 
-Tests are enabled by default. The CLI and benchmarks options are currently off
-by default because this repository does not include those targets yet.
+Tests are enabled by default and use GoogleTest. CMake first looks for an
+installed GoogleTest package and falls back to downloading GoogleTest with
+FetchContent when needed. The CLI and benchmarks options are currently off by
+default because this repository does not include those targets yet.
 
 Useful CMake options:
 
@@ -30,7 +34,7 @@ cmake -S . -B build -DVECTORDB_BUILD_TESTS=OFF
 
 ## Run Tests
 
-After building, run the test suite with CTest:
+After building, run the GoogleTest suite with CTest:
 
 ```sh
 ctest --test-dir build --output-on-failure
