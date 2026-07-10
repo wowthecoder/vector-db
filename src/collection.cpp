@@ -6,7 +6,8 @@ namespace vectordb
 {
 
     Collection::Collection(std::size_t dim, Metric metric)
-        : vectors_(dim),
+        : metric_(metric),
+          vectors_(dim),
           index_(vectors_, metric)
     {
     }
@@ -36,6 +37,29 @@ namespace vectordb
         }
 
         const auto internal_results = index_.search(query, top_k);
+
+        return internal_to_external_list(internal_results);
+    }
+
+    std::vector<std::vector<SearchResult>> Collection::batch_search(
+        std::span<const float> queries,
+        std::size_t top_k) const
+    {
+        const auto internal_results = index_.batch_search(queries, top_k);
+        std::vector<std::vector<SearchResult>> results;
+        results.reserve(internal_results.size());
+        for (const auto &internal_result : internal_results)
+        {
+            const auto result = internal_to_external_list(internal_result);
+            results.push_back(result);
+        }
+
+        return results;
+    }
+
+    std::vector<SearchResult> Collection::internal_to_external_list(
+        std::vector<InternalSearchResult> internal_results) const
+    {
         std::vector<SearchResult> results;
         results.reserve(internal_results.size());
 
@@ -59,6 +83,11 @@ namespace vectordb
     std::size_t Collection::dim() const
     {
         return vectors_.dim();
+    }
+
+    Metric Collection::metric() const
+    {
+        return metric_;
     }
 
 }

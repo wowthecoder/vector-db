@@ -35,7 +35,10 @@ namespace vectordb
             {
                 return {};
             }
+
             std::vector<InternalSearchResult> heap;
+            heap.reserve(std::min(top_k, results.size()));
+
             for (const auto &result : results)
             {
                 if (heap.size() < top_k)
@@ -84,6 +87,32 @@ namespace vectordb
         }
 
         return select_top_k(std::move(results), top_k, higher_is_better());
+    }
+
+    std::vector<std::vector<InternalSearchResult>> FlatIndex::batch_search(
+        std::span<const float> queries,
+        std::size_t top_k) const
+    {
+        if (queries.size() % vectors_.dim() != 0)
+        {
+            throw std::invalid_argument("Query list should be divisible by vector dimension");
+        }
+        if (queries.empty())
+        {
+            return {};
+        }
+
+        size_t query_count = queries.size() / vectors_.dim();
+        std::vector<std::vector<InternalSearchResult>> results;
+        results.reserve(query_count);
+
+        for (size_t i = 0; i < query_count; ++i)
+        {
+            std::span<const float> query(queries.data() + (i * vectors_.dim()), vectors_.dim());
+            results.push_back(search(query, top_k));
+        }
+
+        return results;
     }
 
     float FlatIndex::score_vector(const float *a, const float *b) const

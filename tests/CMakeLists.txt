@@ -15,9 +15,11 @@ endif()
 include(GoogleTest)
 
 add_executable(vectordb_tests
+    batch_search_tests.cpp
     collection_tests.cpp
     distance_tests.cpp
     flat_index_tests.cpp
+    persistence_tests.cpp
     vector_store_tests.cpp
 )
 

@@ -16,6 +16,9 @@ namespace vectordb
         FlatIndex(const VectorStore &vectors, Metric metric);
 
         std::vector<InternalSearchResult> search(std::span<const float> query, std::size_t top_k) const;
+        std::vector<std::vector<InternalSearchResult>> batch_search(
+            std::span<const float> queries,
+            std::size_t top_k) const;
 
     private:
         float score_vector(const float *a, const float *b) const;
