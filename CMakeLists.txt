@@ -50,3 +50,33 @@ endif()
 if(VECTORDB_BUILD_BENCHMARKS AND EXISTS "${PROJECT_SOURCE_DIR}/benchmarks/CMakeLists.txt")
     add_subdirectory(benchmarks)
 endif()
+
+find_program(CLANG_FORMAT_EXECUTABLE
+    NAMES clang-format
+)
+
+if(CLANG_FORMAT_EXECUTABLE)
+    file(GLOB_RECURSE PROJECT_FORMAT_FILES
+        CONFIGURE_DEPENDS
+        "${CMAKE_SOURCE_DIR}/include/*.h"
+        "${CMAKE_SOURCE_DIR}/include/*.hpp"
+        "${CMAKE_SOURCE_DIR}/src/*.c"
+        "${CMAKE_SOURCE_DIR}/src/*.cc"
+        "${CMAKE_SOURCE_DIR}/src/*.cpp"
+        "${CMAKE_SOURCE_DIR}/tests/*.c"
+        "${CMAKE_SOURCE_DIR}/tests/*.cc"
+        "${CMAKE_SOURCE_DIR}/tests/*.cpp"
+    )
+
+    add_custom_target(format
+        COMMAND ${CLANG_FORMAT_EXECUTABLE}
+                -i
+                -style=file
+                ${PROJECT_FORMAT_FILES}
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        COMMENT "Formatting C/C++ source files"
+        VERBATIM
+    )
+else()
+    message(WARNING "clang-format was not found; the format target is unavailable")
+endif()

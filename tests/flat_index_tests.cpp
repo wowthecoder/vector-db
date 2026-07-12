@@ -1,12 +1,11 @@
-#include "vectordb/indexes/flat_index.hpp"
-
 #include <gtest/gtest.h>
 
 #include <stdexcept>
 #include <vector>
 
-TEST(FlatIndexTest, SearchesStoredVectorsByL2Distance)
-{
+#include "vectordb/indexes/flat_index.hpp"
+
+TEST(FlatIndexTest, SearchesStoredVectorsByL2Distance) {
     vectordb::VectorStore vectors(2);
     vectors.add(std::vector<float>{3.0f, 0.0f});
     vectors.add(std::vector<float>{1.0f, 0.0f});
@@ -22,8 +21,7 @@ TEST(FlatIndexTest, SearchesStoredVectorsByL2Distance)
     EXPECT_NEAR(results[1].score, 2.0f, 0.0001f);
 }
 
-TEST(FlatIndexTest, SearchesStoredVectorsByDotProduct)
-{
+TEST(FlatIndexTest, SearchesStoredVectorsByDotProduct) {
     vectordb::VectorStore vectors(2);
     vectors.add(std::vector<float>{1.0f, 0.0f});
     vectors.add(std::vector<float>{0.0f, 1.0f});
@@ -39,8 +37,7 @@ TEST(FlatIndexTest, SearchesStoredVectorsByDotProduct)
     EXPECT_NEAR(results[1].score, 1.0f, 0.0001f);
 }
 
-TEST(FlatIndexTest, UsesInternalIdAsTieBreaker)
-{
+TEST(FlatIndexTest, UsesInternalIdAsTieBreaker) {
     vectordb::VectorStore vectors(2);
     vectors.add(std::vector<float>{1.0f, 0.0f});
     vectors.add(std::vector<float>{1.0f, 0.0f});
@@ -55,10 +52,10 @@ TEST(FlatIndexTest, UsesInternalIdAsTieBreaker)
     EXPECT_EQ(results[2].internal_id, 2);
 }
 
-TEST(FlatIndexTest, ValidatesQueryDimension)
-{
+TEST(FlatIndexTest, ValidatesQueryDimension) {
     vectordb::VectorStore vectors(2);
     const vectordb::FlatIndex index(vectors, vectordb::Metric::L2);
 
-    EXPECT_THROW(index.search(std::vector<float>{1.0f}, 1), std::invalid_argument);
+    EXPECT_THROW(index.search(std::vector<float>{1.0f}, 1),
+                 std::invalid_argument);
 }

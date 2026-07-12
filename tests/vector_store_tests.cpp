@@ -1,13 +1,12 @@
-#include "vectordb/vector_store.hpp"
-
 #include <gtest/gtest.h>
 
 #include <array>
 #include <stdexcept>
 #include <vector>
 
-TEST(VectorStoreTest, AddsAndRetrievesVectors)
-{
+#include "vectordb/vector_store.hpp"
+
+TEST(VectorStoreTest, AddsAndRetrievesVectors) {
     vectordb::VectorStore store(3);
 
     const std::vector<float> first{1.0f, 2.0f, 3.0f};
@@ -20,8 +19,7 @@ TEST(VectorStoreTest, AddsAndRetrievesVectors)
     EXPECT_NEAR(store.get(1)[2], 6.0f, 0.0001f);
 }
 
-TEST(VectorStoreTest, AssignsSequentialIdsAndPreservesStoredValues)
-{
+TEST(VectorStoreTest, AssignsSequentialIdsAndPreservesStoredValues) {
     vectordb::VectorStore store(2);
 
     EXPECT_EQ(store.add(std::array<float, 2>{1.0f, 2.0f}), 0);
@@ -37,8 +35,7 @@ TEST(VectorStoreTest, AssignsSequentialIdsAndPreservesStoredValues)
     EXPECT_NEAR(store.get(2)[1], 6.0f, 0.0001f);
 }
 
-TEST(VectorStoreTest, ValidatesDimensionsAndIds)
-{
+TEST(VectorStoreTest, ValidatesDimensionsAndIds) {
     vectordb::VectorStore store(3);
     const std::vector<float> wrong_dim{1.0f, 2.0f};
 

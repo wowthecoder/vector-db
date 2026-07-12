@@ -1,23 +1,22 @@
-#include "vectordb/collection.hpp"
-
 #include <gtest/gtest.h>
 
 #include <stdexcept>
 #include <vector>
 
-TEST(CollectionTest, EmptySearchReturnsNoResults)
-{
+#include "vectordb/collection.hpp"
+
+TEST(CollectionTest, EmptySearchReturnsNoResults) {
     vectordb::Collection collection(3, vectordb::Metric::L2);
 
-    const auto results = collection.search(std::vector<float>{1.0f, 2.0f, 3.0f}, 10);
+    const auto results =
+        collection.search(std::vector<float>{1.0f, 2.0f, 3.0f}, 10);
 
     EXPECT_TRUE(results.empty());
     EXPECT_EQ(collection.size(), 0);
     EXPECT_EQ(collection.dim(), 3);
 }
 
-TEST(CollectionTest, RanksL2SearchByLowestDistance)
-{
+TEST(CollectionTest, RanksL2SearchByLowestDistance) {
     vectordb::Collection collection(2, vectordb::Metric::L2);
 
     collection.insert("near", std::vector<float>{1.0f, 1.0f});
@@ -32,8 +31,7 @@ TEST(CollectionTest, RanksL2SearchByLowestDistance)
     EXPECT_NEAR(results[0].score, 0.0f, 0.0001f);
 }
 
-TEST(CollectionTest, TopKLargerThanCollectionReturnsAllSortedResults)
-{
+TEST(CollectionTest, TopKLargerThanCollectionReturnsAllSortedResults) {
     vectordb::Collection collection(2, vectordb::Metric::L2);
 
     collection.insert("middle", std::vector<float>{2.0f, 0.0f});
@@ -48,8 +46,7 @@ TEST(CollectionTest, TopKLargerThanCollectionReturnsAllSortedResults)
     EXPECT_EQ(results[2].external_id, "farthest");
 }
 
-TEST(CollectionTest, TiesAreOrderedByInternalId)
-{
+TEST(CollectionTest, TiesAreOrderedByInternalId) {
     vectordb::Collection collection(2, vectordb::Metric::Dot);
 
     collection.insert("first", std::vector<float>{1.0f, 0.0f});
@@ -67,8 +64,7 @@ TEST(CollectionTest, TiesAreOrderedByInternalId)
     EXPECT_EQ(results[2].internal_id, 2);
 }
 
-TEST(CollectionTest, RanksDotSearchByHighestScore)
-{
+TEST(CollectionTest, RanksDotSearchByHighestScore) {
     vectordb::Collection collection(2, vectordb::Metric::Dot);
 
     collection.insert("x", std::vector<float>{1.0f, 0.0f});
@@ -82,8 +78,7 @@ TEST(CollectionTest, RanksDotSearchByHighestScore)
     EXPECT_EQ(results[1].external_id, "x");
 }
 
-TEST(CollectionTest, RanksCosineSearchByHighestSimilarity)
-{
+TEST(CollectionTest, RanksCosineSearchByHighestSimilarity) {
     vectordb::Collection collection(2, vectordb::Metric::Cosine);
 
     collection.insert("same", std::vector<float>{2.0f, 0.0f});
@@ -96,8 +91,7 @@ TEST(CollectionTest, RanksCosineSearchByHighestSimilarity)
     EXPECT_NEAR(results[0].score, 1.0f, 0.0001f);
 }
 
-TEST(CollectionTest, ValidatesInputs)
-{
+TEST(CollectionTest, ValidatesInputs) {
     vectordb::Collection collection(2, vectordb::Metric::L2);
 
     collection.insert("id", std::vector<float>{1.0f, 2.0f});
@@ -105,16 +99,19 @@ TEST(CollectionTest, ValidatesInputs)
     EXPECT_EQ(collection.size(), 1);
     EXPECT_EQ(collection.dim(), 2);
     EXPECT_TRUE(collection.search(std::vector<float>{1.0f, 2.0f}, 0).empty());
-    EXPECT_THROW(collection.insert("id", std::vector<float>{3.0f, 4.0f}), std::invalid_argument);
-    EXPECT_THROW(collection.insert("", std::vector<float>{3.0f, 4.0f}), std::invalid_argument);
-    EXPECT_THROW(collection.search(std::vector<float>{1.0f}, 1), std::invalid_argument);
+    EXPECT_THROW(collection.insert("id", std::vector<float>{3.0f, 4.0f}),
+                 std::invalid_argument);
+    EXPECT_THROW(collection.insert("", std::vector<float>{3.0f, 4.0f}),
+                 std::invalid_argument);
+    EXPECT_THROW(collection.search(std::vector<float>{1.0f}, 1),
+                 std::invalid_argument);
 }
 
-TEST(CollectionTest, FailedInsertDoesNotConsumeExternalId)
-{
+TEST(CollectionTest, FailedInsertDoesNotConsumeExternalId) {
     vectordb::Collection collection(2, vectordb::Metric::L2);
 
-    EXPECT_THROW(collection.insert("retry", std::vector<float>{1.0f}), std::invalid_argument);
+    EXPECT_THROW(collection.insert("retry", std::vector<float>{1.0f}),
+                 std::invalid_argument);
     EXPECT_EQ(collection.size(), 0);
 
     collection.insert("retry", std::vector<float>{1.0f, 2.0f});

@@ -1,9 +1,5 @@
 #pragma once
 
-#include "vectordb/indexes/flat_index.hpp"
-#include "vectordb/types.hpp"
-#include "vectordb/vector_store.hpp"
-
 #include <cstddef>
 #include <filesystem>
 #include <memory>
@@ -12,41 +8,44 @@
 #include <unordered_map>
 #include <vector>
 
-namespace vectordb
-{
+#include "vectordb/indexes/flat_index.hpp"
+#include "vectordb/types.hpp"
+#include "vectordb/vector_store.hpp"
 
-    class Collection
-    {
-    public:
-        Collection(std::size_t dim, Metric metric);
-        Collection(const Collection &) = delete;
-        Collection &operator=(const Collection &) = delete;
-        Collection(Collection &&) = delete;
-        Collection &operator=(Collection &&) = delete;
+namespace vectordb {
 
-        void insert(const std::string &external_id, std::span<const float> vector);
+class Collection {
+   public:
+    Collection(std::size_t dim, Metric metric);
+    Collection(const Collection &) = delete;
+    Collection &operator=(const Collection &) = delete;
+    Collection(Collection &&) = delete;
+    Collection &operator=(Collection &&) = delete;
 
-        std::vector<SearchResult> search(std::span<const float> query, std::size_t top_k) const;
-        std::vector<std::vector<SearchResult>> batch_search(
-            std::span<const float> queries,
-            std::size_t top_k) const;
+    void insert(const std::string &external_id, std::span<const float> vector);
 
-        void save(const std::filesystem::path &path) const;
-        static std::unique_ptr<Collection> load(const std::filesystem::path &path);
+    std::vector<SearchResult> search(std::span<const float> query,
+                                     std::size_t top_k) const;
+    std::vector<std::vector<SearchResult>> batch_search(
+        std::span<const float> queries, std::size_t top_k) const;
 
-        std::size_t size() const;
-        std::size_t dim() const;
-        Metric metric() const;
+    void save(const std::filesystem::path &path) const;
+    static std::unique_ptr<Collection> load(const std::filesystem::path &path);
 
-    private:
-        Metric metric_;
-        VectorStore vectors_;
-        FlatIndex index_;
+    std::size_t size() const;
+    std::size_t dim() const;
+    Metric metric() const;
 
-        std::vector<SearchResult> internal_to_external_list(const std::vector<InternalSearchResult> &internal_results) const;
+   private:
+    Metric metric_;
+    VectorStore vectors_;
+    FlatIndex index_;
 
-        std::unordered_map<std::string, std::uint64_t> external_to_internal_;
-        std::vector<std::string> internal_to_external_;
-    };
+    std::vector<SearchResult> internal_to_external_list(
+        const std::vector<InternalSearchResult> &internal_results) const;
 
-}
+    std::unordered_map<std::string, std::uint64_t> external_to_internal_;
+    std::vector<std::string> internal_to_external_;
+};
+
+}  // namespace vectordb
