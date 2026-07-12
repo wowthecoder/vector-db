@@ -50,15 +50,14 @@ namespace vectordb
         results.reserve(internal_results.size());
         for (const auto &internal_result : internal_results)
         {
-            const auto result = internal_to_external_list(internal_result);
-            results.push_back(result);
+            results.push_back(internal_to_external_list(internal_result));
         }
 
         return results;
     }
 
     std::vector<SearchResult> Collection::internal_to_external_list(
-        std::vector<InternalSearchResult> internal_results) const
+        const std::vector<InternalSearchResult> &internal_results) const
     {
         std::vector<SearchResult> results;
         results.reserve(internal_results.size());

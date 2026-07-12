@@ -43,7 +43,7 @@ namespace vectordb
         VectorStore vectors_;
         FlatIndex index_;
 
-        std::vector<SearchResult> internal_to_external_list(std::vector<InternalSearchResult> internal_results) const;
+        std::vector<SearchResult> internal_to_external_list(const std::vector<InternalSearchResult> &internal_results) const;
 
         std::unordered_map<std::string, std::uint64_t> external_to_internal_;
         std::vector<std::string> internal_to_external_;

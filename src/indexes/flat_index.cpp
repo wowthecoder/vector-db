@@ -102,11 +102,11 @@ namespace vectordb
             return {};
         }
 
-        size_t query_count = queries.size() / vectors_.dim();
+        std::size_t query_count = queries.size() / vectors_.dim();
         std::vector<std::vector<InternalSearchResult>> results;
         results.reserve(query_count);
 
-        for (size_t i = 0; i < query_count; ++i)
+        for (std::size_t i = 0; i < query_count; ++i)
         {
             std::span<const float> query(queries.data() + (i * vectors_.dim()), vectors_.dim());
             results.push_back(search(query, top_k));

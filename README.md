@@ -22,15 +22,19 @@ cmake --build build
 
 Tests are enabled by default and use GoogleTest. CMake first looks for an
 installed GoogleTest package and falls back to downloading GoogleTest with
-FetchContent when needed. The CLI and benchmarks options are currently off by
-default because this repository does not include those targets yet.
+FetchContent when needed. The CLI and benchmarks options are off by default.
 
 Useful CMake options:
 
 ```sh
 cmake -S . -B build -DVECTORDB_BUILD_TESTS=ON
 cmake -S . -B build -DVECTORDB_BUILD_TESTS=OFF
+cmake -S . -B build-benchmarks -DCMAKE_BUILD_TYPE=Release \
+    -DVECTORDB_BUILD_TESTS=OFF -DVECTORDB_BUILD_BENCHMARKS=ON
 ```
+
+The benchmark targets are intentionally scaffolded for implementation. See
+[`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) for the build commands and guidance.
 
 ## Run Tests
 
