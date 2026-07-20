@@ -66,6 +66,38 @@ Save machine-readable results for later comparison:
     --benchmark_out_format=json
 ```
 
+## Generate an HTML report
+
+Turn a Google Benchmark JSON file into a self-contained dashboard:
+
+```sh
+python3 benchmarks/generate_report.py benchmark-results.json \
+    --output benchmark-report.html
+```
+
+The generator requires Python 3.10 or newer and has no third-party package
+dependencies.
+
+Open `benchmark-report.html` in any modern browser. The report contains run
+metadata and measurement warnings, a canonical-workload table, search-scaling
+charts, batch-versus-repeated-search comparisons, insertion and persistence
+charts, and a sortable, filterable table of every benchmark case. All CSS,
+JavaScript, and SVG charts are embedded in the HTML; generation requires only
+the Python standard library and viewing the report does not require a network
+connection.
+
+When an input contains repeated benchmark runs, the report uses aggregate
+medians and displays the wall-time coefficient of variation. If aggregate rows
+are absent, it calculates those statistics from the raw repetitions. A
+single-repetition input remains supported, but the dashboard marks it as a
+trend-only measurement.
+
+Run the report-generator tests with:
+
+```sh
+python3 -m unittest discover -s benchmarks -p 'test_generate_report.py' -v
+```
+
 For a quick smoke run while developing the harness, select a small case and
 reduce the minimum measurement time. Do not use this shortened run as a
 performance baseline:
