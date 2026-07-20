@@ -58,6 +58,11 @@ find_program(CLANG_FORMAT_EXECUTABLE
 if(CLANG_FORMAT_EXECUTABLE)
     file(GLOB_RECURSE PROJECT_FORMAT_FILES
         CONFIGURE_DEPENDS
+        "${CMAKE_SOURCE_DIR}/benchmarks/*.h"
+        "${CMAKE_SOURCE_DIR}/benchmarks/*.hpp"
+        "${CMAKE_SOURCE_DIR}/benchmarks/*.c"
+        "${CMAKE_SOURCE_DIR}/benchmarks/*.cc"
+        "${CMAKE_SOURCE_DIR}/benchmarks/*.cpp"
         "${CMAKE_SOURCE_DIR}/include/*.h"
         "${CMAKE_SOURCE_DIR}/include/*.hpp"
         "${CMAKE_SOURCE_DIR}/src/*.c"

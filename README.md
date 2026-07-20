@@ -36,6 +36,19 @@ cmake -S . -B build-benchmarks -DCMAKE_BUILD_TYPE=Release \
 The benchmark targets are intentionally scaffolded for implementation. See
 [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) for the build commands and guidance.
 
+## Format Source Code
+
+The formatting target requires `clang-format`. Configure the project, then run
+the `format` target:
+
+```sh
+cmake -S . -B build -G Ninja
+cmake --build build --target format
+```
+
+This formats the project's C and C++ source files in place using the
+repository's `.clang-format` configuration, which is based on Google C++ style.
+
 ## Run Tests
 
 After building, run the GoogleTest suite with CTest:

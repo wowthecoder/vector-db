@@ -1,35 +1,5 @@
 # Benchmark Implementation Guide
 
-The `benchmarks/` directory contains a compiling Google Benchmark skeleton for
-insertion, single search, batch search, save, and load. Every benchmark is
-registered with a small initial set of arguments, but deliberately calls
-`SkipWithError` until you implement it.
-
-## Build and run
-
-Keep benchmarks in a release build. Debug builds mainly measure disabled
-optimizations and assertion overhead.
-
-```sh
-cmake -S . -B build-benchmarks \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DVECTORDB_BUILD_TESTS=OFF \
-    -DVECTORDB_BUILD_BENCHMARKS=ON
-cmake --build build-benchmarks
-./build-benchmarks/benchmarks/vectordb_benchmarks
-```
-
-CMake uses an installed Google Benchmark package when one is available and
-otherwise fetches version 1.8.3. Useful runner options include:
-
-```sh
-./build-benchmarks/benchmarks/vectordb_benchmarks --benchmark_list_tests
-./build-benchmarks/benchmarks/vectordb_benchmarks --benchmark_filter=BatchSearch
-./build-benchmarks/benchmarks/vectordb_benchmarks \
-    --benchmark_repetitions=5 \
-    --benchmark_report_aggregates_only=true
-```
-
 ## Implement the shared data helpers first
 
 Fill in `benchmark_utils.cpp` before the benchmark bodies.
@@ -154,4 +124,3 @@ system operations, so do not mix it into this small portable suite.
 4. Implement insertion and its throughput counters.
 5. Implement warm-cache save/load benchmarks.
 6. Record a release-build baseline before optimizing the library.
-

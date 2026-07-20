@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -14,7 +15,25 @@ namespace {
 constexpr std::streamoff k_magic_offset = 0;
 constexpr std::streamoff k_version_offset = 8;
 constexpr std::streamoff k_metric_offset = 12;
+constexpr std::streamoff k_dimension_offset = 16;
+constexpr std::streamoff k_count_offset = 24;
 constexpr std::streamoff k_first_record_offset = 32;
+
+std::string little_endian_u32(std::uint32_t value) {
+    std::string bytes(4, '\0');
+    for (std::size_t i = 0; i < bytes.size(); ++i) {
+        bytes[i] = static_cast<char>((value >> (i * 8)) & 0xff);
+    }
+    return bytes;
+}
+
+std::string little_endian_u64(std::uint64_t value) {
+    std::string bytes(8, '\0');
+    for (std::size_t i = 0; i < bytes.size(); ++i) {
+        bytes[i] = static_cast<char>((value >> (i * 8)) & 0xff);
+    }
+    return bytes;
+}
 
 void overwrite_bytes(const std::filesystem::path &path, std::streamoff offset,
                      const std::string &bytes) {
@@ -27,6 +46,20 @@ void overwrite_bytes(const std::filesystem::path &path, std::streamoff offset,
     file.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
     if (!file) {
         throw std::runtime_error("Failed to modify test collection file");
+    }
+}
+
+void expect_load_error_containing(const std::filesystem::path &path,
+                                  const std::string &expected_message) {
+    try {
+        static_cast<void>(vectordb::Collection::load(path));
+        FAIL() << "Expected Collection::load to throw";
+    } catch (const std::runtime_error &error) {
+        EXPECT_NE(std::string(error.what()).find(expected_message),
+                  std::string::npos)
+            << "Unexpected error: " << error.what();
+    } catch (...) {
+        FAIL() << "Expected Collection::load to throw std::runtime_error";
     }
 }
 
@@ -93,6 +126,23 @@ TEST(PersistenceTest, RoundTripPreservesEmptyCollection) {
     EXPECT_EQ(loaded->size(), 0);
 }
 
+TEST(PersistenceTest, SaveRejectsExcessiveDimensionBeforeCreatingFile) {
+    const TemporaryFile file("save_excessive_dimension");
+    const vectordb::Collection collection(65'537, vectordb::Metric::L2);
+
+    EXPECT_THROW(collection.save(file.path()), std::runtime_error);
+    EXPECT_FALSE(std::filesystem::exists(file.path()));
+}
+
+TEST(PersistenceTest, SaveRejectsExcessiveIdLengthBeforeCreatingFile) {
+    const TemporaryFile file("save_excessive_id_length");
+    vectordb::Collection collection(1, vectordb::Metric::L2);
+    collection.insert(std::string(65'537, 'x'), std::vector<float>{1.0f});
+
+    EXPECT_THROW(collection.save(file.path()), std::runtime_error);
+    EXPECT_FALSE(std::filesystem::exists(file.path()));
+}
+
 TEST(PersistenceTest, LoadRejectsMissingFile) {
     const TemporaryFile file("missing");
 
@@ -127,6 +177,37 @@ TEST(PersistenceTest, LoadRejectsInvalidMetricCode) {
                     std::string{'\x63', '\0', '\0', '\0'});
 
     EXPECT_THROW(vectordb::Collection::load(file.path()), std::runtime_error);
+}
+
+TEST(PersistenceTest, LoadRejectsExcessiveDimension) {
+    const TemporaryFile file("excessive_dimension");
+    const vectordb::Collection collection(2, vectordb::Metric::L2);
+    collection.save(file.path());
+    overwrite_bytes(file.path(), k_dimension_offset, little_endian_u64(65'537));
+
+    expect_load_error_containing(file.path(),
+                                 "Vector dimension exceeds maximum");
+}
+
+TEST(PersistenceTest, LoadRejectsExcessiveVectorCount) {
+    const TemporaryFile file("excessive_count");
+    const vectordb::Collection collection(2, vectordb::Metric::L2);
+    collection.save(file.path());
+    overwrite_bytes(file.path(), k_count_offset, little_endian_u64(10'000'001));
+
+    expect_load_error_containing(file.path(), "Vector count exceeds maximum");
+}
+
+TEST(PersistenceTest, LoadRejectsExcessiveExternalIdLength) {
+    const TemporaryFile file("excessive_id_length");
+    vectordb::Collection collection(2, vectordb::Metric::L2);
+    collection.insert("valid", std::vector<float>{1.0f, 2.0f});
+    collection.save(file.path());
+    overwrite_bytes(file.path(), k_first_record_offset,
+                    little_endian_u32(65'537));
+
+    expect_load_error_containing(file.path(),
+                                 "External ID length exceeds maximum");
 }
 
 TEST(PersistenceTest, LoadRejectsTruncatedVectorData) {

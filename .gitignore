@@ -8,3 +8,4 @@ build/
 *.dll
 *.exe
 *.log
+build-benchmarks/

@@ -1,28 +1,38 @@
 #pragma once
 
-#include "vectordb/collection.hpp"
-
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <vector>
 
-namespace vectordb::benchmarks
-{
+#include "vectordb/collection.hpp"
 
-    // TODO: Generate repeatable input from seed. Keep generation outside timed loops.
-    std::vector<float> make_vector(std::size_t dimension, std::uint32_t seed);
+namespace vectordb::benchmarks {
 
-    // TODO: Build a populated collection with stable, unique external IDs.
-    std::unique_ptr<Collection> make_collection(
-        std::size_t vector_count,
-        std::size_t dimension,
-        Metric metric,
-        std::uint32_t seed);
+class TemporaryFileCleanup {
+   public:
+    explicit TemporaryFileCleanup(std::filesystem::path path)
+        : path_(std::move(path)) {}
 
-    // TODO: Return a collision-resistant path in the system temporary directory.
-    std::filesystem::path make_temporary_path();
+    ~TemporaryFileCleanup() noexcept {
+        std::error_code error;
+        std::filesystem::remove(path_, error);
+    }
 
-}
+    TemporaryFileCleanup(const TemporaryFileCleanup &) = delete;
+    TemporaryFileCleanup &operator=(const TemporaryFileCleanup &) = delete;
 
+   private:
+    std::filesystem::path path_;
+};
+
+std::vector<float> make_vector(std::size_t dimension, std::uint32_t seed);
+
+std::unique_ptr<Collection> make_collection(std::size_t vector_count,
+                                            std::size_t dimension,
+                                            Metric metric, std::uint32_t seed);
+
+std::filesystem::path make_temporary_path();
+
+}  // namespace vectordb::benchmarks

@@ -4,6 +4,7 @@
 #include <istream>
 #include <ostream>
 #include <stdexcept>
+#include <string>
 
 #include "vectordb/collection.hpp"
 
@@ -11,6 +12,10 @@ namespace {
 constexpr std::array<char, 8> k_magic_bytes{'V', 'D', 'B', 'C',
                                             'O', 'L', 'L', '\0'};
 constexpr std::uint32_t k_version = 1;
+// Format safety limits checked before allocating data from an input file.
+constexpr std::uint64_t k_max_dimension = 65536;
+constexpr std::uint64_t k_max_vector_count = 10'000'000;
+constexpr std::uint32_t k_max_external_id_length = 65536;
 
 /*
 Format v1, little-endian:
@@ -95,6 +100,24 @@ std::uint64_t read_u64(std::istream &in) {
 
 namespace vectordb {
 void Collection::save(const std::filesystem::path &path) const {
+    if (dim() > k_max_dimension) {
+        throw std::runtime_error(
+            "Vector dimension exceeds maximum supported dimension of " +
+            std::to_string(k_max_dimension));
+    }
+    if (size() > k_max_vector_count) {
+        throw std::runtime_error(
+            "Vector count exceeds maximum supported count of " +
+            std::to_string(k_max_vector_count));
+    }
+    for (const auto &external_id : internal_to_external_) {
+        if (external_id.size() > k_max_external_id_length) {
+            throw std::runtime_error(
+                "External ID length exceeds maximum supported length of " +
+                std::to_string(k_max_external_id_length));
+        }
+    }
+
     std::ofstream out(path, std::ios::binary);
     if (!out) {
         throw std::runtime_error("Failed to open file: " + path.string());
@@ -114,6 +137,8 @@ void Collection::save(const std::filesystem::path &path) const {
         case Metric::Cosine:
             metric_code = 2;
             break;
+        default:
+            throw std::runtime_error("Unsupported collection metric");
     }
 
     write_u32(out, metric_code);
@@ -180,8 +205,18 @@ std::unique_ptr<Collection> Collection::load(
     if (dimension == 0) {
         throw std::runtime_error("Vector dimension cannot be zero");
     }
+    if (dimension > k_max_dimension) {
+        throw std::runtime_error(
+            "Vector dimension exceeds maximum supported dimension of " +
+            std::to_string(k_max_dimension));
+    }
 
     const std::uint64_t count = read_u64(in);
+    if (count > k_max_vector_count) {
+        throw std::runtime_error(
+            "Vector count exceeds maximum supported count of " +
+            std::to_string(k_max_vector_count));
+    }
 
     auto collection = std::make_unique<Collection>(dimension, metric);
 
@@ -190,6 +225,11 @@ std::unique_ptr<Collection> Collection::load(
 
         if (id_length == 0) {
             throw std::runtime_error("External ID length cannot be zero");
+        }
+        if (id_length > k_max_external_id_length) {
+            throw std::runtime_error(
+                "External ID length exceeds maximum supported length of " +
+                std::to_string(k_max_external_id_length));
         }
 
         std::string external_id(id_length, '\0');
