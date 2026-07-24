@@ -8,15 +8,22 @@
 #include <unordered_map>
 #include <vector>
 
-#include "vectordb/indexes/flat_index.hpp"
+#include "vectordb/indexes/index.hpp"
+#include "vectordb/indexes/random_projection_lsh_index.hpp"
 #include "vectordb/types.hpp"
 #include "vectordb/vector_store.hpp"
 
 namespace vectordb {
 
+struct CollectionOptions {
+    IndexKind index_kind = IndexKind::Flat;
+    RandomProjectionLshConfig lsh;
+};
+
 class Collection {
    public:
     Collection(std::size_t dim, Metric metric);
+    Collection(std::size_t dim, Metric metric, CollectionOptions options);
     Collection(const Collection &) = delete;
     Collection &operator=(const Collection &) = delete;
     Collection(Collection &&) = delete;
@@ -35,11 +42,14 @@ class Collection {
     std::size_t size() const;
     std::size_t dim() const;
     Metric metric() const;
+    IndexKind index_kind() const;
+    const RandomProjectionLshConfig &lsh_config() const;
 
    private:
     Metric metric_;
     VectorStore vectors_;
-    FlatIndex index_;
+    CollectionOptions options_;
+    std::unique_ptr<Index> index_;
 
     std::vector<SearchResult> internal_to_external_list(
         const std::vector<InternalSearchResult> &internal_results) const;

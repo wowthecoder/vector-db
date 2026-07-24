@@ -81,3 +81,30 @@ int main()
     return results.empty() ? 1 : 0;
 }
 ```
+
+Flat search remains the default. Select random-projection LSH explicitly for a
+cosine collection:
+
+```cpp
+vectordb::CollectionOptions options{
+    .index_kind = vectordb::IndexKind::RandomProjectionLsh,
+    .lsh =
+        {
+            .num_tables = 8,
+            .num_bits_per_table = 8,
+            .num_candidates = 100,
+            .seed = 42,
+        },
+};
+
+vectordb::Collection collection(
+    3, vectordb::Metric::Cosine, options);
+
+collection.insert("first", std::vector<float>{1.0f, 0.0f, 0.0f});
+auto results =
+    collection.search(std::vector<float>{1.0f, 0.0f, 0.0f}, 1);
+```
+
+New inserts are added to the LSH tables immediately. Saving a collection
+preserves its index kind and LSH configuration; loading deterministically
+reconstructs the index from the stored vectors and seed.

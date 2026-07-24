@@ -34,12 +34,22 @@ PARAMETER_ORDER = {
     "save": ("count", "dimension"),
     "load": ("count", "dimension"),
     "search": ("count", "dimension", "top_k"),
+    "lsh_search": (
+        "count",
+        "dimension",
+        "top_k",
+        "num_tables",
+        "num_bits",
+        "num_candidates",
+        "query_count",
+    ),
     "batch_search": ("count", "dimension", "query_count", "top_k"),
     "repeated_search": ("count", "dimension", "query_count", "top_k"),
 }
 OPERATION_NAMES = {
     "insert": "Insert",
     "search": "Single search",
+    "lsh_search": "LSH search",
     "batch_search": "Batch search",
     "repeated_search": "Repeated single search",
     "save": "Save",
@@ -62,6 +72,9 @@ class Result:
     cpu_ms: float
     items_per_second: float | None
     bytes_per_second: float | None
+    recall_at_k: float | None
+    lsh_build_ms: float | None
+    index_payload_bytes: float | None
     repetitions: int
     cv_percent: float | None
     threads: int
@@ -91,7 +104,10 @@ def parse_benchmark_name(name: str) -> tuple[str, str | None, dict[str, int | fl
     metric_match = re.search(r"<[^>]*::([^>:]+)>", function)
     metric = metric_match.group(1) if metric_match else None
 
-    if function.startswith("BM_CollectionBatchSearch"):
+    if function.startswith("BM_RandomProjectionLshSearch"):
+        operation = "lsh_search"
+        metric = "Cosine"
+    elif function.startswith("BM_CollectionBatchSearch"):
         operation = "batch_search"
     elif function.startswith("BM_RepeatedSingleSearch"):
         operation = "repeated_search"
@@ -134,7 +150,15 @@ def _median_row(rows: Sequence[Mapping[str, Any]]) -> tuple[dict[str, Any], floa
         if len(raw) == 1:
             return dict(raw[0]), None, "single run"
         selected = copy.deepcopy(raw[0])
-        for key in ("real_time", "cpu_time", "items_per_second", "bytes_per_second"):
+        for key in (
+            "real_time",
+            "cpu_time",
+            "items_per_second",
+            "bytes_per_second",
+            "recall_at_k",
+            "lsh_build_ms",
+            "index_payload_bytes",
+        ):
             values = [number for row in raw if (number := finite_number(row.get(key))) is not None]
             if values:
                 selected[key] = statistics.median(values)
@@ -200,6 +224,11 @@ def load_results(path: Path) -> tuple[dict[str, Any], list[Result], list[str]]:
                 cpu_ms=cpu * TIME_TO_MS[unit],
                 items_per_second=finite_number(row.get("items_per_second")),
                 bytes_per_second=finite_number(row.get("bytes_per_second")),
+                recall_at_k=finite_number(row.get("recall_at_k")),
+                lsh_build_ms=finite_number(row.get("lsh_build_ms")),
+                index_payload_bytes=finite_number(
+                    row.get("index_payload_bytes")
+                ),
                 repetitions=int(row.get("repetitions", len(rows)) or len(rows)),
                 cv_percent=cv_percent,
                 threads=int(row.get("threads", 1) or 1),
@@ -446,6 +475,92 @@ def make_batch_section(results: Sequence[Result], canonical: Mapping[str, Any]) 
     return '<div class="chart-grid">' + "".join(charts) + "</div>" + table
 
 
+def make_lsh_section(results: Sequence[Result]) -> str:
+    lsh_results = sorted(
+        (result for result in results if result.operation == "lsh_search"),
+        key=lambda result: (
+            result.params.get("count", 0),
+            result.params.get("dimension", 0),
+            result.params.get("top_k", 0),
+            result.params.get("num_tables", 0),
+            result.params.get("num_bits", 0),
+            result.params.get("num_candidates", 0),
+        ),
+    )
+    if not lsh_results:
+        return empty_chart(
+            "LSH recall and latency",
+            "No random-projection LSH benchmark cases were found.",
+        )
+
+    rows: list[str] = []
+    for result in lsh_results:
+        recall_percent = (
+            None
+            if result.recall_at_k is None
+            else result.recall_at_k * 100.0
+        )
+        payload_mib = (
+            None
+            if result.index_payload_bytes is None
+            else result.index_payload_bytes / (1024.0 * 1024.0)
+        )
+        values = (
+            result.params.get("count"),
+            result.params.get("dimension"),
+            result.params.get("top_k"),
+            result.params.get("num_tables"),
+            result.params.get("num_bits"),
+            result.params.get("num_candidates"),
+            result.real_ms,
+            recall_percent,
+            result.items_per_second,
+            result.lsh_build_ms,
+            payload_mib,
+        )
+        displays = (
+            fmt_param(values[0]) if values[0] is not None else "—",
+            fmt_param(values[1]) if values[1] is not None else "—",
+            fmt_param(values[2]) if values[2] is not None else "—",
+            fmt_param(values[3]) if values[3] is not None else "—",
+            fmt_param(values[4]) if values[4] is not None else "—",
+            fmt_param(values[5]) if values[5] is not None else "—",
+            fmt_number(values[6], 4),
+            "—" if values[7] is None else f"{values[7]:.2f}%",
+            fmt_number(values[8]),
+            fmt_number(values[9], 3),
+            fmt_number(values[10], 3),
+        )
+        cells = "".join(
+            f'<td data-sort="{escape("" if value is None else value)}">'
+            f"{escape(display)}</td>"
+            for value, display in zip(values, displays)
+        )
+        rows.append(f"<tr>{cells}</tr>")
+
+    headers = (
+        "Count",
+        "Dimension",
+        "Top K",
+        "Tables",
+        "Bits",
+        "Candidates",
+        "Wall ms/query",
+        "Recall@K",
+        "Queries/s",
+        "Build ms",
+        "Payload MiB",
+    )
+    header_html = "".join(
+        f'<th tabindex="0" data-sortable="true">{escape(header)}</th>'
+        for header in headers
+    )
+    return (
+        '<div class="table-wrap"><table id="lsh-results"><thead><tr>'
+        f"{header_html}</tr></thead><tbody>{''.join(rows)}</tbody></table></div>"
+    )
+
+
 def make_write_charts(results: Sequence[Result]) -> str:
     inserts = sorted((result for result in results if result.operation == "insert"), key=lambda result: result.params.get("count", 0))
     insert_categories = [fmt_param(result.params.get("count", "?")) for result in inserts]
@@ -583,6 +698,8 @@ def render_report(title: str, context: Mapping[str, Any], results: Sequence[Resu
 {results_table(overview, "canonical-results", False)}
 <h2>Search scaling</h2><p>Each chart changes one workload dimension while holding the others at the canonical values. Lower is better.</p>
 {make_search_charts(results, canonical)}
+<h2>LSH recall and latency</h2><p>Latency is measured per approximate cosine query. Recall is measured against exact FlatIndex top-k results; higher is better.</p>
+{make_lsh_section(results)}
 <h2>Batch search versus repeated searches</h2><p>Wall time is divided by the number of queries so the two APIs are directly comparable.</p>
 {make_batch_section(results, canonical)}
 <h2>Insertion and persistence</h2>

@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <fstream>
 #include <istream>
+#include <limits>
 #include <ostream>
 #include <stdexcept>
 #include <string>
@@ -11,19 +12,34 @@
 namespace {
 constexpr std::array<char, 8> k_magic_bytes{'V', 'D', 'B', 'C',
                                             'O', 'L', 'L', '\0'};
-constexpr std::uint32_t k_version = 1;
+constexpr std::uint32_t k_current_version = 2;
+constexpr std::uint32_t k_oldest_supported_version = 1;
 // Format safety limits checked before allocating data from an input file.
 constexpr std::uint64_t k_max_dimension = 65536;
 constexpr std::uint64_t k_max_vector_count = 10'000'000;
 constexpr std::uint32_t k_max_external_id_length = 65536;
+constexpr std::uint64_t k_max_lsh_tables = 4096;
+constexpr std::uint64_t k_max_lsh_bits = 64;
+constexpr std::uint64_t k_max_lsh_candidates = k_max_vector_count;
 
 /*
-Format v1, little-endian:
+Common header, little-endian:
 magic bytes: 8 bytes
 version: uint32
 metric: uint32 (0 for L2, 1 for Dot, 2 for Cosine)
 dimension: uint64
 vector count: uint64
+
+Format v2 then adds:
+index kind: uint32 (0 for Flat, 1 for RandomProjectionLsh)
+LSH number of tables: uint64
+LSH bits per table: uint64
+LSH candidate limit: uint64
+LSH seed: uint64
+
+Format v1 has no index metadata and always loads as Flat.
+
+Both versions then store:
 for every vector, write the following:
     external id byte length: uint32
     external id bytes
@@ -96,6 +112,18 @@ std::uint64_t read_u64(std::istream &in) {
 
     return value;
 }
+
+std::size_t checked_lsh_size(std::uint64_t value, std::uint64_t maximum,
+                             const std::string &name) {
+    if (value == 0) {
+        throw std::runtime_error(name + " must be greater than zero");
+    }
+    if (value > maximum || value > std::numeric_limits<std::size_t>::max()) {
+        throw std::runtime_error(name + " exceeds maximum supported value of " +
+                                 std::to_string(maximum));
+    }
+    return static_cast<std::size_t>(value);
+}
 }  // namespace
 
 namespace vectordb {
@@ -124,7 +152,7 @@ void Collection::save(const std::filesystem::path &path) const {
     }
 
     write_exact(out, k_magic_bytes.data(), 8 * sizeof(char));
-    write_u32(out, k_version);
+    write_u32(out, k_current_version);
     std::uint32_t metric_code;
 
     switch (metric_) {
@@ -144,6 +172,40 @@ void Collection::save(const std::filesystem::path &path) const {
     write_u32(out, metric_code);
     write_u64(out, static_cast<std::uint64_t>(dim()));
     write_u64(out, static_cast<std::uint64_t>(size()));
+
+    std::uint32_t index_code;
+    switch (options_.index_kind) {
+        case IndexKind::Flat:
+            index_code = 0;
+            break;
+        case IndexKind::RandomProjectionLsh:
+            index_code = 1;
+            break;
+        default:
+            throw std::runtime_error("Unsupported collection index kind");
+    }
+
+    if (options_.lsh.num_tables > k_max_lsh_tables) {
+        throw std::runtime_error(
+            "LSH table count exceeds maximum supported value of " +
+            std::to_string(k_max_lsh_tables));
+    }
+    if (options_.lsh.num_bits_per_table > k_max_lsh_bits) {
+        throw std::runtime_error(
+            "LSH bits per table exceeds maximum supported value of " +
+            std::to_string(k_max_lsh_bits));
+    }
+    if (options_.lsh.num_candidates > k_max_lsh_candidates) {
+        throw std::runtime_error(
+            "LSH candidate limit exceeds maximum supported value of " +
+            std::to_string(k_max_lsh_candidates));
+    }
+
+    write_u32(out, index_code);
+    write_u64(out, static_cast<std::uint64_t>(options_.lsh.num_tables));
+    write_u64(out, static_cast<std::uint64_t>(options_.lsh.num_bits_per_table));
+    write_u64(out, static_cast<std::uint64_t>(options_.lsh.num_candidates));
+    write_u64(out, options_.lsh.seed);
 
     for (std::uint64_t internal_id = 0; internal_id < size(); ++internal_id) {
         const std::string &external_id =
@@ -177,7 +239,7 @@ std::unique_ptr<Collection> Collection::load(
 
     const std::uint32_t version = read_u32(in);
 
-    if (version != k_version) {
+    if (version < k_oldest_supported_version || version > k_current_version) {
         throw std::runtime_error("Unsupported collection file version: " +
                                  std::to_string(version));
     }
@@ -218,7 +280,36 @@ std::unique_ptr<Collection> Collection::load(
             std::to_string(k_max_vector_count));
     }
 
-    auto collection = std::make_unique<Collection>(dimension, metric);
+    CollectionOptions options;
+    if (version >= 2) {
+        const std::uint32_t index_code = read_u32(in);
+        switch (index_code) {
+            case 0:
+                options.index_kind = IndexKind::Flat;
+                break;
+            case 1:
+                options.index_kind = IndexKind::RandomProjectionLsh;
+                break;
+            default:
+                throw std::runtime_error("Invalid collection index kind code");
+        }
+
+        options.lsh.num_tables =
+            checked_lsh_size(read_u64(in), k_max_lsh_tables, "LSH table count");
+        options.lsh.num_bits_per_table = checked_lsh_size(
+            read_u64(in), k_max_lsh_bits, "LSH bits per table");
+        options.lsh.num_candidates = checked_lsh_size(
+            read_u64(in), k_max_lsh_candidates, "LSH candidate limit");
+        options.lsh.seed = read_u64(in);
+
+        if (options.index_kind == IndexKind::RandomProjectionLsh &&
+            metric != Metric::Cosine) {
+            throw std::runtime_error(
+                "Random-projection LSH requires cosine metric");
+        }
+    }
+
+    auto collection = std::make_unique<Collection>(dimension, metric, options);
 
     for (std::uint64_t internal_id = 0; internal_id < count; ++internal_id) {
         const std::uint32_t id_length = read_u32(in);

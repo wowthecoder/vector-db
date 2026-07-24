@@ -20,6 +20,7 @@ add_executable(vectordb_tests
     distance_tests.cpp
     flat_index_tests.cpp
     persistence_tests.cpp
+    random_projection_lsh_index_tests.cpp
     vector_store_tests.cpp
 )
 

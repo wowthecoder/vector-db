@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "vectordb/indexes/index.hpp"
 #include "vectordb/types.hpp"
 #include "vectordb/vector_store.hpp"
 
@@ -23,17 +24,18 @@ struct RandomProjectionLshConfig {
 // The first implementation should target cosine similarity. See
 // docs/LSH_TODO.md for the intended implementation sequence and the changes
 // needed to support other metrics correctly.
-class RandomProjectionLshIndex {
+class RandomProjectionLshIndex : public Index {
    public:
     RandomProjectionLshIndex(
         const VectorStore &vectors, Metric metric,
         RandomProjectionLshConfig config = RandomProjectionLshConfig{});
 
     // Rebuilds projections and hash tables from the current VectorStore.
-    void build();
+    void build() override;
+    void add(std::uint64_t internal_id) override;
 
     std::vector<InternalSearchResult> search(std::span<const float> query,
-                                             std::size_t top_k) const;
+                                             std::size_t top_k) const override;
 
     bool is_built() const;
     const RandomProjectionLshConfig &config() const;
@@ -48,10 +50,6 @@ class RandomProjectionLshIndex {
                                 std::size_t table_index) const;
     std::vector<std::uint64_t> collect_candidates(
         std::span<const float> query) const;
-    float score_vector(const float *query, const float *candidate) const;
-    std::vector<InternalSearchResult> select_top_k(
-        std::span<const std::uint64_t> candidate_ids,
-        std::span<const float> query, std::size_t top_k) const;
 
     const VectorStore &vectors_;
     Metric metric_;

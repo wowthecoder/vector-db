@@ -1,14 +1,13 @@
 # Random Projection / LSH Implementation Guide
 
-The skeleton consists of:
+The implementation consists of:
 
 - `include/vectordb/indexes/random_projection_lsh_index.hpp`
 - `src/indexes/random_projection_lsh_index.cpp`
 
-It deliberately is not connected to `Collection` yet. Implement and test the
-index directly against `VectorStore` first. Connecting an unfinished
-approximate index to the public collection API would make the existing exact
-search behavior ambiguous.
+The index was implemented and tested directly against `VectorStore` before
+being connected to `Collection`. Flat search remains the default, while callers
+can now select LSH explicitly through `CollectionOptions`.
 
 ## Scope the first version
 
@@ -159,7 +158,7 @@ For a small, deliberately easy cosine dataset, assert that the expected nearest
 neighbor is found. Do not require perfect recall for arbitrary random datasets;
 LSH is approximate, and such a test will become flaky as parameters change.
 
-## 7. Measure recall against `FlatIndex`
+## 7. Measure recall against `FlatIndex` — implemented
 
 Use `FlatIndex` as ground truth. For each query, compare its exact top `k` IDs
 with the LSH result:
@@ -179,20 +178,25 @@ Benchmark these controls independently:
 Always report recall beside latency. An approximate search time without its
 result quality is not meaningful.
 
-## 8. Integrate only after the standalone index works
+The implementation is in `benchmarks/lsh_recall_benchmarks.cpp`. It reports
+`recall_at_k`, per-query latency, query throughput, `lsh_build_ms`, and the
+portable logical `index_payload_bytes` estimate. See `benchmarks/README.md` for
+build commands, counter definitions, and the focused benchmark command.
 
-The current `Collection` owns a concrete `FlatIndex`. Once LSH tests and recall
-benchmarks are stable, choose an index-selection design. Reasonable options are
-an `Index` interface with runtime polymorphism or a collection configuration
-that owns one of several index types.
+## 8. Integrate only after the standalone index works — implemented
 
-Whichever design you choose, preserve these properties:
+`Index` is the runtime-polymorphic search contract implemented by `FlatIndex`
+and `RandomProjectionLshIndex`. `Collection` owns a `std::unique_ptr<Index>` and
+selects its implementation from `CollectionOptions`; flat remains the default.
+
+The integration preserves these properties:
 
 - brute force remains available as the exact default and ground truth;
 - callers select approximate search explicitly;
-- inserting a vector either updates the LSH index or clearly marks it stale;
-- persistence either serializes the LSH state and seed or deterministically
-  rebuilds it after loading;
+- inserting a vector updates every LSH table through `Index::add`;
+- persistence version 2 stores the index kind and LSH configuration, then
+  deterministically reconstructs the tables while loading;
+- persistence version 1 remains readable and defaults to flat search;
 - public search results still translate internal IDs to external IDs in one
   place.
 

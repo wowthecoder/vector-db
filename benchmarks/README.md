@@ -1,6 +1,7 @@
-The `benchmarks/` directory contains Google Benchmarks for insertion, single
-search, batch search, repeated single search, save, and load. The sections
-below document the intended measurement boundaries and remaining improvements.
+The `benchmarks/` directory contains Google Benchmarks for insertion, exact
+single search, random-projection LSH search and recall, batch search, repeated
+single search, save, and load. The sections below document the measurement
+boundaries and remaining improvements.
 
 ## Build and run
 
@@ -43,6 +44,8 @@ Run the complete suite or one benchmark family:
 ./build-benchmarks/benchmarks/vectordb_benchmarks \
     --benchmark_filter='BM_CollectionSearch'
 ./build-benchmarks/benchmarks/vectordb_benchmarks \
+    --benchmark_filter='BM_RandomProjectionLshSearch'
+./build-benchmarks/benchmarks/vectordb_benchmarks \
     --benchmark_filter='BM_(CollectionBatchSearch|RepeatedSingleSearch)'
 ./build-benchmarks/benchmarks/vectordb_benchmarks \
     --benchmark_filter='BM_Collection(Save|Load)'
@@ -55,6 +58,36 @@ Use repetitions and compare aggregate medians for a useful local baseline:
     --benchmark_repetitions=5 \
     --benchmark_report_aggregates_only=true
 ```
+
+## LSH recall benchmark
+
+`BM_RandomProjectionLshSearch` times one cosine query per benchmark iteration.
+Fixture generation, exact `FlatIndex` searches, LSH construction, and recall
+calculation occur outside the timed loop. Each case reports:
+
+- `recall_at_k`: fraction from 0 to 1 of exact top-k IDs returned by LSH;
+- `items_per_second`: timed LSH queries per second;
+- `lsh_build_ms`: one deterministic index build;
+- `index_payload_bytes`: projection floats plus stored table memberships.
+
+`index_payload_bytes` is a portable logical payload measurement, not allocator
+resident memory. It excludes hash nodes, bucket arrays, vector capacity, and
+allocator bookkeeping.
+
+The registered cases vary dataset size, dimension, `top_k`, table count,
+signature width, and candidate limit one at a time around a canonical workload.
+Run only this family with:
+
+```sh
+./build-benchmarks/benchmarks/vectordb_benchmarks \
+    --benchmark_filter='BM_RandomProjectionLshSearch' \
+    --benchmark_repetitions=5 \
+    --benchmark_report_aggregates_only=true
+```
+
+Recall is computed over 50 fixed-seed queries. It is a quality measurement for
+comparing configurations, not a promise that arbitrary workloads have the same
+recall.
 
 Save machine-readable results for later comparison:
 
@@ -80,11 +113,11 @@ dependencies.
 
 Open `benchmark-report.html` in any modern browser. The report contains run
 metadata and measurement warnings, a canonical-workload table, search-scaling
-charts, batch-versus-repeated-search comparisons, insertion and persistence
-charts, and a sortable, filterable table of every benchmark case. All CSS,
-JavaScript, and SVG charts are embedded in the HTML; generation requires only
-the Python standard library and viewing the report does not require a network
-connection.
+charts, an LSH latency/recall table, batch-versus-repeated-search comparisons,
+insertion and persistence charts, and a sortable, filterable table of every
+benchmark case. All CSS, JavaScript, and SVG charts are embedded in the HTML;
+generation requires only the Python standard library and viewing the report
+does not require a network connection.
 
 When an input contains repeated benchmark runs, the report uses aggregate
 medians and displays the wall-time coefficient of variation. If aggregate rows

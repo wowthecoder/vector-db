@@ -4,24 +4,24 @@
 #include <span>
 #include <vector>
 
+#include "vectordb/indexes/index.hpp"
 #include "vectordb/types.hpp"
 #include "vectordb/vector_store.hpp"
 
 namespace vectordb {
 
-class FlatIndex {
+class FlatIndex : public Index {
    public:
     FlatIndex(const VectorStore &vectors, Metric metric);
 
+    void build() override;
+    void add(std::uint64_t internal_id) override;
     std::vector<InternalSearchResult> search(std::span<const float> query,
-                                             std::size_t top_k) const;
+                                             std::size_t top_k) const override;
     std::vector<std::vector<InternalSearchResult>> batch_search(
         std::span<const float> queries, std::size_t top_k) const;
 
    private:
-    float score_vector(const float *a, const float *b) const;
-    bool higher_is_better() const;
-
     const VectorStore &vectors_;
     Metric metric_;
 };

@@ -49,6 +49,19 @@ class ReportTestCase(unittest.TestCase):
             "BM_CollectionSearch<vectordb::Metric::L2>/count:10000/dimension:128/top_k:10": (
                 "search", "L2", {"count": 10000, "dimension": 128, "top_k": 10}
             ),
+            "BM_RandomProjectionLshSearch/count:10000/dimension:128/top_k:10/num_tables:8/num_bits:8/num_candidates:100/query_count:50": (
+                "lsh_search",
+                "Cosine",
+                {
+                    "count": 10000,
+                    "dimension": 128,
+                    "top_k": 10,
+                    "num_tables": 8,
+                    "num_bits": 8,
+                    "num_candidates": 100,
+                    "query_count": 50,
+                },
+            ),
             "BM_CollectionBatchSearch<vectordb::Metric::Dot>/count:10000/dimension:128/query_count:8/top_k:10": (
                 "batch_search", "Dot", {"count": 10000, "dimension": 128, "query_count": 8, "top_k": 10}
             ),
@@ -120,11 +133,25 @@ class ReportTestCase(unittest.TestCase):
                 benchmark_row(f"BM_CollectionBatchSearch<vectordb::Metric::{metric}>/count:10000/dimension:128/query_count:8/top_k:10", 12.0, 13.0, "ms", items_per_second=600),
                 benchmark_row(f"BM_RepeatedSingleSearch<vectordb::Metric::{metric}>/count:10000/dimension:128/query_count:8/top_k:10", 13.0, 14.0, "ms", items_per_second=550),
             ])
+        rows.append(
+            benchmark_row(
+                "BM_RandomProjectionLshSearch/count:10000/dimension:128/top_k:10/num_tables:8/num_bits:8/num_candidates:100/query_count:50",
+                0.025,
+                0.025,
+                "ms",
+                items_per_second=40_000,
+                recall_at_k=0.75,
+                lsh_build_ms=12.5,
+                index_payload_bytes=1_048_576,
+            )
+        )
         context, results, warnings = report.load_results(self.write_document({"context": {"library_build_type": "release"}, "benchmarks": rows}))
         rendered = report.render_report("<Unsafe & title>", context, results, warnings)
         self.assertIn("&lt;Unsafe &amp; title&gt;", rendered)
         self.assertIn("Search scaling", rendered)
         self.assertIn("Batch search versus repeated searches", rendered)
+        self.assertIn("LSH recall and latency", rendered)
+        self.assertIn("75.00%", rendered)
         self.assertIn("Insertion and persistence", rendered)
         self.assertIn("Complete results", rendered)
         self.assertIn("only one repetition", rendered)

@@ -5,6 +5,7 @@
 #include <unordered_set>
 #include <utility>
 
+#include "index_utils.hpp"
 #include "vectordb/distance.hpp"
 
 namespace vectordb {
@@ -49,6 +50,20 @@ void RandomProjectionLshIndex::build() {
     is_built_ = true;
 }
 
+void RandomProjectionLshIndex::add(std::uint64_t internal_id) {
+    if (!is_built_) {
+        throw std::logic_error("LSH index must be built before insertion");
+    }
+
+    const std::span<const float> vector(vectors_.get(internal_id),
+                                        vectors_.dim());
+    for (std::size_t table_index = 0; table_index < config_.num_tables;
+         ++table_index) {
+        const Signature signature = compute_signature(vector, table_index);
+        tables_.at(table_index)[signature].push_back(internal_id);
+    }
+}
+
 std::vector<InternalSearchResult> RandomProjectionLshIndex::search(
     std::span<const float> query, std::size_t top_k) const {
     if (query.size() != vectors_.dim()) {
@@ -62,10 +77,20 @@ std::vector<InternalSearchResult> RandomProjectionLshIndex::search(
         throw std::logic_error("LSH index must be built before searching");
     }
 
-    // TODO: Collect candidate IDs from the query's buckets, cap the candidate
-    // set according to config_, then score and rank the candidates exactly.
-    throw std::logic_error(
-        "RandomProjectionLshIndex::search is not implemented");
+    const std::vector<std::uint64_t> candidate_ids = collect_candidates(query);
+    std::vector<InternalSearchResult> results;
+    results.reserve(candidate_ids.size());
+
+    for (const std::uint64_t internal_id : candidate_ids) {
+        const float *candidate = vectors_.get(internal_id);
+        results.push_back({
+            internal_id,
+            index_detail::score_vector(metric_, query.data(), candidate,
+                                       vectors_.dim()),
+        });
+    }
+
+    return index_detail::select_top_k(std::move(results), top_k, metric_);
 }
 
 bool RandomProjectionLshIndex::is_built() const { return is_built_; }
@@ -74,7 +99,6 @@ const RandomProjectionLshConfig &RandomProjectionLshIndex::config() const {
     return config_;
 }
 
-// TODO: Define the private implementation helpers declared in the header.
 void RandomProjectionLshIndex::generate_random_projections() {
     std::mt19937_64 generator(config_.seed);
     std::normal_distribution<float> distribution(0.0f, 1.0f);

@@ -17,7 +17,9 @@ constexpr std::streamoff k_version_offset = 8;
 constexpr std::streamoff k_metric_offset = 12;
 constexpr std::streamoff k_dimension_offset = 16;
 constexpr std::streamoff k_count_offset = 24;
-constexpr std::streamoff k_first_record_offset = 32;
+constexpr std::streamoff k_index_kind_offset = 32;
+constexpr std::streamoff k_lsh_tables_offset = 36;
+constexpr std::streamoff k_first_record_offset = 68;
 
 std::string little_endian_u32(std::uint32_t value) {
     std::string bytes(4, '\0');
@@ -63,6 +65,39 @@ void expect_load_error_containing(const std::filesystem::path &path,
     }
 }
 
+void write_legacy_v1_collection(const std::filesystem::path &path) {
+    std::ofstream file(path, std::ios::binary);
+    if (!file) {
+        throw std::runtime_error("Failed to create legacy collection file");
+    }
+
+    const std::string magic{"VDBCOLL\0", 8};
+    const std::string version = little_endian_u32(1);
+    const std::string metric = little_endian_u32(0);
+    const std::string dimension = little_endian_u64(2);
+    const std::string count = little_endian_u64(1);
+    const std::string id_length = little_endian_u32(6);
+    const std::string external_id = "legacy";
+    const std::vector<float> values{1.0f, 2.0f};
+
+    file.write(magic.data(), static_cast<std::streamsize>(magic.size()));
+    file.write(version.data(), static_cast<std::streamsize>(version.size()));
+    file.write(metric.data(), static_cast<std::streamsize>(metric.size()));
+    file.write(dimension.data(),
+               static_cast<std::streamsize>(dimension.size()));
+    file.write(count.data(), static_cast<std::streamsize>(count.size()));
+    file.write(id_length.data(),
+               static_cast<std::streamsize>(id_length.size()));
+    file.write(external_id.data(),
+               static_cast<std::streamsize>(external_id.size()));
+    file.write(reinterpret_cast<const char *>(values.data()),
+               static_cast<std::streamsize>(values.size() * sizeof(float)));
+
+    if (!file) {
+        throw std::runtime_error("Failed to write legacy collection file");
+    }
+}
+
 class TemporaryFile {
    public:
     explicit TemporaryFile(const std::string &test_name)
@@ -103,6 +138,7 @@ TEST(PersistenceTest, RoundTripPreservesConfigurationAndSearchResults) {
     EXPECT_EQ(loaded->dim(), original.dim());
     EXPECT_EQ(loaded->size(), original.size());
     EXPECT_EQ(loaded->metric(), original.metric());
+    EXPECT_EQ(loaded->index_kind(), vectordb::IndexKind::Flat);
 
     const auto actual = loaded->search(query, 3);
     ASSERT_EQ(actual.size(), expected.size());
@@ -124,6 +160,63 @@ TEST(PersistenceTest, RoundTripPreservesEmptyCollection) {
     EXPECT_EQ(loaded->dim(), 4);
     EXPECT_EQ(loaded->metric(), vectordb::Metric::Cosine);
     EXPECT_EQ(loaded->size(), 0);
+}
+
+TEST(PersistenceTest, RoundTripPreservesLshConfigurationAndResults) {
+    const TemporaryFile file("lsh_round_trip");
+    const vectordb::CollectionOptions options{
+        .index_kind = vectordb::IndexKind::RandomProjectionLsh,
+        .lsh =
+            {
+                .num_tables = 5,
+                .num_bits_per_table = 6,
+                .num_candidates = 20,
+                .seed = 1234,
+            },
+    };
+    vectordb::Collection original(2, vectordb::Metric::Cosine, options);
+    original.insert("x", std::vector<float>{1.0f, 0.0f});
+    original.insert("y", std::vector<float>{0.0f, 1.0f});
+    original.insert("negative_x", std::vector<float>{-1.0f, 0.0f});
+
+    const std::vector<float> query{1.0f, 0.0f};
+    const auto expected = original.search(query, 3);
+
+    original.save(file.path());
+    const auto loaded = vectordb::Collection::load(file.path());
+
+    ASSERT_NE(loaded, nullptr);
+    EXPECT_EQ(loaded->index_kind(), vectordb::IndexKind::RandomProjectionLsh);
+    EXPECT_EQ(loaded->lsh_config().num_tables, 5);
+    EXPECT_EQ(loaded->lsh_config().num_bits_per_table, 6);
+    EXPECT_EQ(loaded->lsh_config().num_candidates, 20);
+    EXPECT_EQ(loaded->lsh_config().seed, 1234);
+
+    const auto actual = loaded->search(query, 3);
+    ASSERT_EQ(actual.size(), expected.size());
+    for (std::size_t i = 0; i < expected.size(); ++i) {
+        EXPECT_EQ(actual[i].external_id, expected[i].external_id);
+        EXPECT_EQ(actual[i].internal_id, expected[i].internal_id);
+        EXPECT_FLOAT_EQ(actual[i].score, expected[i].score);
+    }
+}
+
+TEST(PersistenceTest, LoadsVersionOneFilesAsFlatCollections) {
+    const TemporaryFile file("legacy_v1");
+    write_legacy_v1_collection(file.path());
+
+    const auto loaded = vectordb::Collection::load(file.path());
+
+    ASSERT_NE(loaded, nullptr);
+    EXPECT_EQ(loaded->index_kind(), vectordb::IndexKind::Flat);
+    EXPECT_EQ(loaded->metric(), vectordb::Metric::L2);
+    EXPECT_EQ(loaded->dim(), 2);
+    EXPECT_EQ(loaded->size(), 1);
+
+    const auto results = loaded->search(std::vector<float>{1.0f, 2.0f}, 1);
+    ASSERT_EQ(results.size(), 1);
+    EXPECT_EQ(results.front().external_id, "legacy");
+    EXPECT_FLOAT_EQ(results.front().score, 0.0f);
 }
 
 TEST(PersistenceTest, SaveRejectsExcessiveDimensionBeforeCreatingFile) {
@@ -164,7 +257,7 @@ TEST(PersistenceTest, LoadRejectsUnsupportedVersion) {
     const vectordb::Collection collection(2, vectordb::Metric::L2);
     collection.save(file.path());
     overwrite_bytes(file.path(), k_version_offset,
-                    std::string{'\x02', '\0', '\0', '\0'});
+                    std::string{'\x03', '\0', '\0', '\0'});
 
     EXPECT_THROW(vectordb::Collection::load(file.path()), std::runtime_error);
 }
@@ -177,6 +270,25 @@ TEST(PersistenceTest, LoadRejectsInvalidMetricCode) {
                     std::string{'\x63', '\0', '\0', '\0'});
 
     EXPECT_THROW(vectordb::Collection::load(file.path()), std::runtime_error);
+}
+
+TEST(PersistenceTest, LoadRejectsInvalidIndexKindCode) {
+    const TemporaryFile file("invalid_index_kind");
+    const vectordb::Collection collection(2, vectordb::Metric::L2);
+    collection.save(file.path());
+    overwrite_bytes(file.path(), k_index_kind_offset,
+                    std::string{'\x63', '\0', '\0', '\0'});
+
+    expect_load_error_containing(file.path(), "index kind");
+}
+
+TEST(PersistenceTest, LoadRejectsInvalidLshConfiguration) {
+    const TemporaryFile file("invalid_lsh_config");
+    const vectordb::Collection collection(2, vectordb::Metric::L2);
+    collection.save(file.path());
+    overwrite_bytes(file.path(), k_lsh_tables_offset, little_endian_u64(0));
+
+    expect_load_error_containing(file.path(), "LSH table count");
 }
 
 TEST(PersistenceTest, LoadRejectsExcessiveDimension) {
