@@ -17,6 +17,7 @@ add_library(vectordb
     src/distance.cpp
     src/indexes/flat_index.cpp
     src/indexes/index_utils.cpp
+    src/indexes/inverted_file_flat_index.cpp
     src/indexes/random_projection_lsh_index.cpp
     src/io/collection_io.cpp
     src/vector_store.cpp

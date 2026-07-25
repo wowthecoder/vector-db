@@ -19,6 +19,7 @@ add_executable(vectordb_tests
     collection_tests.cpp
     distance_tests.cpp
     flat_index_tests.cpp
+    inverted_file_flat_index_tests.cpp
     persistence_tests.cpp
     random_projection_lsh_index_tests.cpp
     vector_store_tests.cpp
