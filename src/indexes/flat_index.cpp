@@ -1,7 +1,7 @@
 #include "vectordb/indexes/flat_index.hpp"
 
+#include <algorithm>
 #include <stdexcept>
-#include <utility>
 
 #include "index_utils.hpp"
 
@@ -20,21 +20,24 @@ std::vector<InternalSearchResult> FlatIndex::search(
         throw std::invalid_argument(
             "Query dimension does not match index dimension");
     }
+    if (top_k == 0 || vectors_.size() == 0) {
+        return {};
+    }
 
-    std::vector<InternalSearchResult> results;
-    results.reserve(vectors_.size());
+    index_detail::TopKAccumulator results(std::min(top_k, vectors_.size()),
+                                          metric_);
 
     for (std::uint64_t internal_id = 0; internal_id < vectors_.size();
          ++internal_id) {
-        const float *candidate = vectors_.get(internal_id);
-        results.push_back({
+        const float *candidate_vector = vectors_.get(internal_id);
+        results.consider({
             internal_id,
-            index_detail::score_vector(metric_, query.data(), candidate,
+            index_detail::score_vector(metric_, query.data(), candidate_vector,
                                        vectors_.dim()),
         });
     }
 
-    return index_detail::select_top_k(std::move(results), top_k, metric_);
+    return results.finish();
 }
 
 std::vector<std::vector<InternalSearchResult>> FlatIndex::batch_search(

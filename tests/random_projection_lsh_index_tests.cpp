@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <unordered_set>
 #include <vector>
@@ -61,6 +62,35 @@ TEST(RandomProjectionLshIndexTest, RejectsInvalidConfiguration) {
     EXPECT_THROW(vectordb::RandomProjectionLshIndex(
                      vectors, vectordb::Metric::Cosine, config),
                  std::invalid_argument);
+
+    config = test_config();
+    config.num_tables = vectordb::RandomProjectionLshConfig::max_num_tables + 1;
+    EXPECT_THROW(vectordb::RandomProjectionLshIndex(
+                     vectors, vectordb::Metric::Cosine, config),
+                 std::invalid_argument);
+}
+
+TEST(RandomProjectionLshIndexTest, RejectsProjectionCountOverflow) {
+    const vectordb::VectorStore vectors(
+        std::numeric_limits<std::size_t>::max());
+    auto config = test_config();
+    config.num_tables = 2;
+    config.num_bits_per_table = 64;
+
+    EXPECT_THROW(vectordb::RandomProjectionLshIndex(
+                     vectors, vectordb::Metric::Cosine, config),
+                 std::length_error);
+}
+
+TEST(RandomProjectionLshIndexTest, RejectsUnsupportedMetricsDirectly) {
+    const vectordb::VectorStore vectors(2);
+
+    EXPECT_THROW(vectordb::RandomProjectionLshIndex(
+                     vectors, vectordb::Metric::L2, test_config()),
+                 std::invalid_argument);
+    EXPECT_THROW(vectordb::RandomProjectionLshIndex(
+                     vectors, vectordb::Metric::Dot, test_config()),
+                 std::invalid_argument);
 }
 
 TEST(RandomProjectionLshIndexTest, ExposesConfigurationAndBuildState) {
@@ -113,6 +143,26 @@ TEST(RandomProjectionLshIndexTest, RequiresBuildBeforeAdding) {
                                              test_config());
 
     EXPECT_THROW(index.add(internal_id), std::logic_error);
+}
+
+TEST(RandomProjectionLshIndexTest, RejectsDuplicateAndOutOfOrderAdds) {
+    vectordb::VectorStore vectors(2);
+    vectordb::RandomProjectionLshIndex index(vectors, vectordb::Metric::Cosine,
+                                             test_config());
+    index.build();
+
+    const std::uint64_t first_id = vectors.add(std::vector<float>{1.0f, 0.0f});
+    const std::uint64_t second_id = vectors.add(std::vector<float>{0.0f, 1.0f});
+
+    EXPECT_THROW(index.add(second_id), std::logic_error);
+
+    index.add(first_id);
+    EXPECT_THROW(index.add(first_id), std::logic_error);
+    index.add(second_id);
+
+    EXPECT_EQ(
+        index.search(std::vector<float>{1.0f, 0.0f}, 2).front().internal_id,
+        first_id);
 }
 
 TEST(RandomProjectionLshIndexTest, EmptyBuiltIndexReturnsNoResults) {
@@ -215,8 +265,8 @@ TEST(RandomProjectionLshIndexTest, ReranksCandidatesByExactCosineScore) {
         std::vector<float>{0.0f, 1.0f},
         std::vector<float>{0.0f, -1.0f},
     };
-    for (const auto &vector : stored_vectors) {
-        vectors.add(vector);
+    for (const auto &stored_vector : stored_vectors) {
+        vectors.add(stored_vector);
     }
 
     auto config = test_config();
@@ -314,6 +364,42 @@ TEST(RandomProjectionLshIndexTest, RebuildingWithSameSeedIsDeterministic) {
     expect_same_results(before, after);
 }
 
+TEST(RandomProjectionLshIndexTest,
+     FullBuildAndIncrementalAddsProduceSameResults) {
+    const std::array<std::vector<float>, 6> stored_vectors{
+        std::vector<float>{1.0f, 0.0f, 0.0f},
+        std::vector<float>{0.8f, 0.2f, 0.0f},
+        std::vector<float>{0.0f, 1.0f, 0.0f},
+        std::vector<float>{0.0f, 0.0f, 1.0f},
+        std::vector<float>{-1.0f, 0.0f, 0.0f},
+        std::vector<float>{0.2f, 0.3f, 0.9f},
+    };
+
+    vectordb::VectorStore fully_built_vectors(3);
+    for (const auto &stored_vector : stored_vectors) {
+        fully_built_vectors.add(stored_vector);
+    }
+    vectordb::RandomProjectionLshIndex fully_built_index(
+        fully_built_vectors, vectordb::Metric::Cosine, test_config());
+    fully_built_index.build();
+
+    vectordb::VectorStore incrementally_added_vectors(3);
+    vectordb::RandomProjectionLshIndex incrementally_built_index(
+        incrementally_added_vectors, vectordb::Metric::Cosine, test_config());
+    incrementally_built_index.build();
+    for (const auto &stored_vector : stored_vectors) {
+        const std::uint64_t internal_id =
+            incrementally_added_vectors.add(stored_vector);
+        incrementally_built_index.add(internal_id);
+    }
+
+    for (const auto &query : stored_vectors) {
+        expect_same_results(
+            fully_built_index.search(query, stored_vectors.size()),
+            incrementally_built_index.search(query, stored_vectors.size()));
+    }
+}
+
 TEST(RandomProjectionLshIndexTest, SupportsSixtyFourBitSignatures) {
     vectordb::VectorStore vectors(2);
     vectors.add(std::vector<float>{1.0f, 2.0f});
@@ -349,16 +435,54 @@ TEST(RandomProjectionLshIndexTest,
     EXPECT_TRUE(results.empty());
 }
 
-TEST(RandomProjectionLshIndexTest, PropagatesInvalidCosineVectorErrors) {
+TEST(RandomProjectionLshIndexTest, RejectsZeroVectorsDuringBuild) {
     vectordb::VectorStore vectors(2);
     vectors.add(std::vector<float>{0.0f, 0.0f});
 
+    vectordb::RandomProjectionLshIndex index(vectors, vectordb::Metric::Cosine,
+                                             test_config());
+
+    EXPECT_THROW(index.build(), std::invalid_argument);
+    EXPECT_FALSE(index.is_built());
+}
+
+TEST(RandomProjectionLshIndexTest, RejectsZeroVectorsDuringIncrementalAdd) {
+    vectordb::VectorStore vectors(2);
+    vectordb::RandomProjectionLshIndex index(vectors, vectordb::Metric::Cosine,
+                                             test_config());
+    index.build();
+
+    const std::uint64_t zero_id = vectors.add(std::vector<float>{0.0f, 0.0f});
+
+    EXPECT_THROW(index.add(zero_id), std::invalid_argument);
+    EXPECT_THROW(index.search(std::vector<float>{1.0f, 0.0f}, 1),
+                 std::logic_error);
+}
+
+TEST(RandomProjectionLshIndexTest, RejectsZeroVectorQueriesEarly) {
+    const vectordb::VectorStore vectors(2);
     vectordb::RandomProjectionLshIndex index(vectors, vectordb::Metric::Cosine,
                                              test_config());
     index.build();
 
     EXPECT_THROW(index.search(std::vector<float>{0.0f, 0.0f}, 1),
                  std::invalid_argument);
+}
+
+TEST(RandomProjectionLshIndexTest, FailedRebuildPreservesPreviousIndexState) {
+    vectordb::VectorStore vectors(2);
+    vectors.add(std::vector<float>{1.0f, 0.0f});
+
+    vectordb::RandomProjectionLshIndex index(vectors, vectordb::Metric::Cosine,
+                                             test_config());
+    index.build();
+
+    vectors.add(std::vector<float>{0.0f, 0.0f});
+
+    EXPECT_THROW(index.build(), std::invalid_argument);
+    EXPECT_TRUE(index.is_built());
+    EXPECT_THROW(index.search(std::vector<float>{1.0f, 0.0f}, 1),
+                 std::logic_error);
 }
 
 TEST(RandomProjectionLshIndexTest, MatchesFlatIndexForEasyExactTopOneQueries) {
@@ -371,8 +495,8 @@ TEST(RandomProjectionLshIndexTest, MatchesFlatIndexForEasyExactTopOneQueries) {
         std::vector<float>{0.0f, 0.0f, 1.0f},
         std::vector<float>{0.0f, 0.0f, -1.0f},
     };
-    for (const auto &vector : stored_vectors) {
-        vectors.add(vector);
+    for (const auto &stored_vector : stored_vectors) {
+        vectors.add(stored_vector);
     }
 
     vectordb::FlatIndex flat(vectors, vectordb::Metric::Cosine);
@@ -393,7 +517,7 @@ TEST(RandomProjectionLshIndexTest, MatchesFlatIndexForEasyExactTopOneQueries) {
     }
 }
 
-TEST(RandomProjectionLshIndexTest, RebuildsAfterVectorsAreAdded) {
+TEST(RandomProjectionLshIndexTest, DetectsStaleStoreAndRebuilds) {
     vectordb::VectorStore vectors(2);
     vectors.add(std::vector<float>{0.0f, 1.0f});
 
@@ -403,10 +527,8 @@ TEST(RandomProjectionLshIndexTest, RebuildsAfterVectorsAreAdded) {
 
     const std::uint64_t added_id = vectors.add(std::vector<float>{1.0f, 0.0f});
 
-    const auto stale_results = index.search(std::vector<float>{1.0f, 0.0f}, 2);
-    for (const auto &result : stale_results) {
-        EXPECT_NE(result.internal_id, added_id);
-    }
+    EXPECT_THROW(index.search(std::vector<float>{1.0f, 0.0f}, 2),
+                 std::logic_error);
 
     index.build();
 

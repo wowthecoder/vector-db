@@ -30,6 +30,8 @@ const float *VectorStore::get(std::uint64_t internal_id) const {
     return data_.data() + (internal_id * dim_);
 }
 
+void VectorStore::remove_last() noexcept { data_.resize(data_.size() - dim_); }
+
 std::size_t VectorStore::size() const { return data_.size() / dim_; }
 
 std::size_t VectorStore::dim() const { return dim_; }

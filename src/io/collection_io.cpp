@@ -18,7 +18,8 @@ constexpr std::uint32_t k_oldest_supported_version = 1;
 constexpr std::uint64_t k_max_dimension = 65536;
 constexpr std::uint64_t k_max_vector_count = 10'000'000;
 constexpr std::uint32_t k_max_external_id_length = 65536;
-constexpr std::uint64_t k_max_lsh_tables = 4096;
+constexpr std::uint64_t k_max_lsh_tables =
+    vectordb::RandomProjectionLshConfig::max_num_tables;
 constexpr std::uint64_t k_max_lsh_bits = 64;
 constexpr std::uint64_t k_max_lsh_candidates = k_max_vector_count;
 

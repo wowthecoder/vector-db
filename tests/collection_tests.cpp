@@ -140,6 +140,41 @@ TEST(CollectionTest, FailedInsertDoesNotConsumeExternalId) {
     EXPECT_EQ(results[0].internal_id, 0);
 }
 
+TEST(CollectionTest, RejectsZeroVectorsForCosineCollections) {
+    vectordb::Collection flat_collection(2, vectordb::Metric::Cosine);
+
+    EXPECT_THROW(
+        flat_collection.insert("retry", std::vector<float>{0.0f, 0.0f}),
+        std::invalid_argument);
+    EXPECT_EQ(flat_collection.size(), 0);
+
+    flat_collection.insert("retry", std::vector<float>{1.0f, 0.0f});
+    EXPECT_EQ(flat_collection.size(), 1);
+
+    vectordb::Collection lsh_collection(2, vectordb::Metric::Cosine,
+                                        lsh_options());
+
+    EXPECT_THROW(lsh_collection.insert("retry", std::vector<float>{0.0f, 0.0f}),
+                 std::invalid_argument);
+    EXPECT_EQ(lsh_collection.size(), 0);
+
+    lsh_collection.insert("retry", std::vector<float>{1.0f, 0.0f});
+    const auto results =
+        lsh_collection.search(std::vector<float>{1.0f, 0.0f}, 1);
+    ASSERT_EQ(results.size(), 1);
+    EXPECT_EQ(results.front().external_id, "retry");
+    EXPECT_EQ(results.front().internal_id, 0);
+}
+
+TEST(CollectionTest, RejectsZeroQueriesForCosineCollections) {
+    vectordb::Collection collection(2, vectordb::Metric::Cosine);
+
+    EXPECT_THROW(collection.search(std::vector<float>{0.0f, 0.0f}, 1),
+                 std::invalid_argument);
+    EXPECT_THROW(collection.batch_search(std::vector<float>{0.0f, 0.0f}, 1),
+                 std::invalid_argument);
+}
+
 TEST(CollectionTest, SearchesWithRandomProjectionLshIndex) {
     vectordb::Collection collection(2, vectordb::Metric::Cosine, lsh_options());
 

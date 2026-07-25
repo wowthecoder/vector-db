@@ -13,9 +13,12 @@
 namespace vectordb {
 
 struct RandomProjectionLshConfig {
+    static constexpr std::size_t max_num_tables = 4096;
+
     std::size_t num_tables = 8;
     std::size_t num_bits_per_table = 12;
     std::size_t num_candidates = 100;
+    // Drives a fixed, implementation-independent projection sampler.
     std::uint64_t seed = 42;
 };
 
@@ -45,9 +48,11 @@ class RandomProjectionLshIndex : public Index {
     using Bucket = std::vector<std::uint64_t>;
     using HashTable = std::unordered_map<Signature, Bucket>;
 
-    void generate_random_projections();
-    Signature compute_signature(std::span<const float> vector,
-                                std::size_t table_index) const;
+    std::vector<float> generate_random_projections() const;
+    std::size_t projection_count() const;
+    Signature compute_signature(std::span<const float> input_vector,
+                                std::size_t table_index,
+                                std::span<const float> projections) const;
     std::vector<std::uint64_t> collect_candidates(
         std::span<const float> query) const;
 
@@ -58,6 +63,8 @@ class RandomProjectionLshIndex : public Index {
     // Flattened as [table][bit][dimension].
     std::vector<float> projections_;
     std::vector<HashTable> tables_;
+    std::vector<float> inverse_vector_norms_;
+    std::size_t indexed_vector_count_ = 0;
     bool is_built_ = false;
 };
 

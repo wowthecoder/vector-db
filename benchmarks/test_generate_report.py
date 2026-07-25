@@ -62,6 +62,23 @@ class ReportTestCase(unittest.TestCase):
                     "query_count": 50,
                 },
             ),
+            "BM_Glove25FlatSearch/top_k:10/query_pool:1000": (
+                "glove_flat_search",
+                "Cosine",
+                {"top_k": 10, "query_pool": 1000},
+            ),
+            "BM_Glove25LshSearch/top_k:10/num_tables:8/num_bits:12/num_candidates:1000/query_pool:1000/recall_queries:1000": (
+                "glove_lsh_search",
+                "Cosine",
+                {
+                    "top_k": 10,
+                    "num_tables": 8,
+                    "num_bits": 12,
+                    "num_candidates": 1000,
+                    "query_pool": 1000,
+                    "recall_queries": 1000,
+                },
+            ),
             "BM_CollectionBatchSearch<vectordb::Metric::Dot>/count:10000/dimension:128/query_count:8/top_k:10": (
                 "batch_search", "Dot", {"count": 10000, "dimension": 128, "query_count": 8, "top_k": 10}
             ),
@@ -145,10 +162,46 @@ class ReportTestCase(unittest.TestCase):
                 index_payload_bytes=1_048_576,
             )
         )
+        rows.extend(
+            [
+                benchmark_row(
+                    "BM_Glove25FlatSearch/top_k:10/query_pool:1000",
+                    80,
+                    80,
+                    "ms",
+                    items_per_second=12.5,
+                    recall_at_k=1.0,
+                    dataset_vectors=1_183_514,
+                    dimension=25,
+                    recall_queries=10,
+                ),
+                benchmark_row(
+                    "BM_Glove25LshSearch/top_k:10/num_tables:8/num_bits:12/num_candidates:1000/query_pool:1000/recall_queries:1000",
+                    0.5,
+                    0.5,
+                    "ms",
+                    items_per_second=2_000,
+                    recall_at_k=0.1,
+                    lsh_build_ms=7_000,
+                    dataset_vectors=1_183_514,
+                    dimension=25,
+                    recall_queries=1_000,
+                ),
+            ]
+        )
         context, results, warnings = report.load_results(self.write_document({"context": {"library_build_type": "release"}, "benchmarks": rows}))
         rendered = report.render_report("<Unsafe & title>", context, results, warnings)
         self.assertIn("&lt;Unsafe &amp; title&gt;", rendered)
         self.assertIn("Search scaling", rendered)
+        self.assertIn("GloVe-25 dataset", rendered)
+        self.assertIn('id="glove-latency"', rendered)
+        self.assertIn("GloVe-25 search latency", rendered)
+        self.assertIn('id="glove-recall"', rendered)
+        self.assertIn("GloVe-25 Recall@K", rendered)
+        self.assertIn("8T/12b/1kC", rendered)
+        self.assertIn("Brute force (Flat)", rendered)
+        self.assertIn("Random projection LSH", rendered)
+        self.assertIn("1,183,514", rendered)
         self.assertIn("Batch search versus repeated searches", rendered)
         self.assertIn("LSH recall and latency", rendered)
         self.assertIn("75.00%", rendered)

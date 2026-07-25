@@ -43,6 +43,15 @@ PARAMETER_ORDER = {
         "num_candidates",
         "query_count",
     ),
+    "glove_flat_search": ("top_k", "query_pool"),
+    "glove_lsh_search": (
+        "top_k",
+        "num_tables",
+        "num_bits",
+        "num_candidates",
+        "query_pool",
+        "recall_queries",
+    ),
     "batch_search": ("count", "dimension", "query_count", "top_k"),
     "repeated_search": ("count", "dimension", "query_count", "top_k"),
 }
@@ -50,6 +59,8 @@ OPERATION_NAMES = {
     "insert": "Insert",
     "search": "Single search",
     "lsh_search": "LSH search",
+    "glove_flat_search": "GloVe-25 Flat search",
+    "glove_lsh_search": "GloVe-25 LSH search",
     "batch_search": "Batch search",
     "repeated_search": "Repeated single search",
     "save": "Save",
@@ -104,7 +115,13 @@ def parse_benchmark_name(name: str) -> tuple[str, str | None, dict[str, int | fl
     metric_match = re.search(r"<[^>]*::([^>:]+)>", function)
     metric = metric_match.group(1) if metric_match else None
 
-    if function.startswith("BM_RandomProjectionLshSearch"):
+    if function.startswith("BM_Glove25FlatSearch"):
+        operation = "glove_flat_search"
+        metric = "Cosine"
+    elif function.startswith("BM_Glove25LshSearch"):
+        operation = "glove_lsh_search"
+        metric = "Cosine"
+    elif function.startswith("BM_RandomProjectionLshSearch"):
         operation = "lsh_search"
         metric = "Cosine"
     elif function.startswith("BM_CollectionBatchSearch"):
@@ -158,6 +175,10 @@ def _median_row(rows: Sequence[Mapping[str, Any]]) -> tuple[dict[str, Any], floa
             "recall_at_k",
             "lsh_build_ms",
             "index_payload_bytes",
+            "dataset_vectors",
+            "dimension",
+            "recall_queries",
+            "index_build_ms",
         ):
             values = [number for row in raw if (number := finite_number(row.get(key))) is not None]
             if values:
@@ -214,6 +235,15 @@ def load_results(path: Path) -> tuple[dict[str, Any], list[Result], list[str]]:
             warnings.append(f"Skipped {run_name}: missing finite timing values or unsupported time unit.")
             continue
         operation, metric, params = parse_benchmark_name(run_name)
+        dataset_vectors = finite_number(row.get("dataset_vectors"))
+        benchmark_dimension = finite_number(row.get("dimension"))
+        recall_queries = finite_number(row.get("recall_queries"))
+        if dataset_vectors is not None:
+            params.setdefault("count", int(dataset_vectors))
+        if benchmark_dimension is not None:
+            params.setdefault("dimension", int(benchmark_dimension))
+        if recall_queries is not None:
+            params.setdefault("recall_queries", int(recall_queries))
         results.append(
             Result(
                 name=run_name,
@@ -561,6 +591,168 @@ def make_lsh_section(results: Sequence[Result]) -> str:
     )
 
 
+def make_glove_section(results: Sequence[Result]) -> str:
+    glove_results = sorted(
+        (
+            result
+            for result in results
+            if result.operation
+            in {"glove_flat_search", "glove_lsh_search"}
+        ),
+        key=lambda result: (
+            result.operation,
+            result.params.get("num_tables", 0),
+            result.params.get("num_bits", 0),
+            result.params.get("num_candidates", 0),
+        ),
+    )
+    if not glove_results:
+        return empty_chart(
+            "GloVe-25 Flat and LSH results",
+            "No GloVe-25 dataset benchmark cases were found.",
+        )
+
+    def compact_count(value: int | float | str) -> str:
+        if isinstance(value, int) and value >= 1_000 and value % 1_000 == 0:
+            return f"{value // 1_000}k"
+        return fmt_param(value)
+
+    def chart_label(result: Result) -> str:
+        if result.operation == "glove_flat_search":
+            return "Flat"
+        tables = fmt_param(result.params.get("num_tables", "?"))
+        bits = fmt_param(result.params.get("num_bits", "?"))
+        candidates = compact_count(result.params.get("num_candidates", "?"))
+        return f"{tables}T/{bits}b/{candidates}C"
+
+    categories = [chart_label(result) for result in glove_results]
+    flat_latency = [
+        result.real_ms
+        if result.operation == "glove_flat_search"
+        else None
+        for result in glove_results
+    ]
+    lsh_latency = [
+        result.real_ms
+        if result.operation == "glove_lsh_search"
+        else None
+        for result in glove_results
+    ]
+    flat_recall = [
+        result.recall_at_k * 100.0
+        if result.operation == "glove_flat_search"
+        and result.recall_at_k is not None
+        else None
+        for result in glove_results
+    ]
+    lsh_recall = [
+        result.recall_at_k * 100.0
+        if result.operation == "glove_lsh_search"
+        and result.recall_at_k is not None
+        else None
+        for result in glove_results
+    ]
+    charts = (
+        '<div class="chart-grid">'
+        + bar_chart(
+            "glove-latency",
+            "GloVe-25 search latency",
+            (
+                "Flat scans every vector; lower is better. LSH labels show "
+                "tables, signature bits, and candidate limit."
+            ),
+            categories,
+            {
+                "Brute force (Flat)": flat_latency,
+                "Random projection LSH": lsh_latency,
+            },
+            "wall ms/query",
+        )
+        + bar_chart(
+            "glove-recall",
+            "GloVe-25 Recall@K",
+            (
+                "Recall against the supplied exact neighbors; higher is "
+                "better. See the table for the recall query count."
+            ),
+            categories,
+            {
+                "Brute force (Flat)": flat_recall,
+                "Random projection LSH": lsh_recall,
+            },
+            "%",
+        )
+        + "</div>"
+    )
+
+    rows: list[str] = []
+    for result in glove_results:
+        is_flat = result.operation == "glove_flat_search"
+        recall_percent = (
+            None
+            if result.recall_at_k is None
+            else result.recall_at_k * 100.0
+        )
+        values = (
+            "Flat" if is_flat else "Random projection LSH",
+            result.params.get("count"),
+            result.params.get("dimension"),
+            result.params.get("top_k"),
+            result.params.get("num_tables"),
+            result.params.get("num_bits"),
+            result.params.get("num_candidates"),
+            result.real_ms,
+            recall_percent,
+            result.items_per_second,
+            result.lsh_build_ms if not is_flat else 0.0,
+            result.params.get("recall_queries"),
+        )
+        displays = (
+            values[0],
+            fmt_param(values[1]) if values[1] is not None else "—",
+            fmt_param(values[2]) if values[2] is not None else "—",
+            fmt_param(values[3]) if values[3] is not None else "—",
+            fmt_param(values[4]) if values[4] is not None else "—",
+            fmt_param(values[5]) if values[5] is not None else "—",
+            fmt_param(values[6]) if values[6] is not None else "—",
+            fmt_number(values[7], 4),
+            "—" if values[8] is None else f"{values[8]:.2f}%",
+            fmt_number(values[9]),
+            fmt_number(values[10], 3),
+            fmt_param(values[11]) if values[11] is not None else "—",
+        )
+        cells = "".join(
+            f'<td data-sort="{escape("" if value is None else value)}">'
+            f"{escape(display)}</td>"
+            for value, display in zip(values, displays)
+        )
+        rows.append(f"<tr>{cells}</tr>")
+
+    headers = (
+        "Index",
+        "Vectors",
+        "Dimension",
+        "Top K",
+        "Tables",
+        "Bits",
+        "Candidates",
+        "Wall ms/query",
+        "Recall@K",
+        "Queries/s",
+        "Build ms",
+        "Recall queries",
+    )
+    header_html = "".join(
+        f'<th tabindex="0" data-sortable="true">{escape(header)}</th>'
+        for header in headers
+    )
+    return (
+        charts
+        + '<div class="table-wrap"><table id="glove-results"><thead><tr>'
+        f"{header_html}</tr></thead><tbody>{''.join(rows)}</tbody></table></div>"
+    )
+
+
 def make_write_charts(results: Sequence[Result]) -> str:
     inserts = sorted((result for result in results if result.operation == "insert"), key=lambda result: result.params.get("count", 0))
     insert_categories = [fmt_param(result.params.get("count", "?")) for result in inserts]
@@ -582,6 +774,8 @@ def canonical_results(results: Sequence[Result], canonical: Mapping[str, Any]) -
     chosen: list[Result] = []
     for result in results:
         if result.operation == "search" and result_matches(result, count=canonical["count"], dimension=canonical["dimension"], top_k=canonical["top_k"]):
+            chosen.append(result)
+        elif result.operation in {"glove_flat_search", "glove_lsh_search"} and result_matches(result, count=canonical["count"], dimension=canonical["dimension"], top_k=canonical["top_k"]):
             chosen.append(result)
         elif result.operation in {"batch_search", "repeated_search"} and result_matches(result, count=canonical["count"], dimension=canonical["dimension"], query_count=canonical["query_count"], top_k=canonical["top_k"]):
             chosen.append(result)
@@ -696,6 +890,8 @@ def render_report(title: str, context: Mapping[str, Any], results: Sequence[Resu
 {context_cards(context, results)}{warning_html}
 <h2>Canonical workload</h2><p>{escape(canonical_description)}. Wall time is the primary latency; reported items/s may use Google Benchmark's CPU clock.</p>
 {results_table(overview, "canonical-results", False)}
+<h2>GloVe-25 dataset</h2><p>Flat and random-projection LSH use the same ANN-Benchmarks cosine vectors and supplied exact ground truth. Search latency excludes dataset loading, index construction, and recall evaluation.</p>
+{make_glove_section(results)}
 <h2>Search scaling</h2><p>Each chart changes one workload dimension while holding the others at the canonical values. Lower is better.</p>
 {make_search_charts(results, canonical)}
 <h2>LSH recall and latency</h2><p>Latency is measured per approximate cosine query. Recall is measured against exact FlatIndex top-k results; higher is better.</p>

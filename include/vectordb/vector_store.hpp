@@ -7,6 +7,8 @@
 
 namespace vectordb {
 
+class Collection;
+
 class VectorStore {
    public:
     explicit VectorStore(std::size_t dim);
@@ -19,6 +21,10 @@ class VectorStore {
     std::size_t dim() const;
 
    private:
+    friend class Collection;
+
+    void remove_last() noexcept;
+
     std::size_t dim_;
     std::vector<float> data_;
 };

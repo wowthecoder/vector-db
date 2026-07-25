@@ -1,5 +1,6 @@
 #include "vectordb/collection.hpp"
 
+#include <algorithm>
 #include <stdexcept>
 #include <utility>
 
@@ -23,6 +24,11 @@ std::unique_ptr<Index> make_index(const VectorStore &vectors, Metric metric,
     }
 
     throw std::invalid_argument("Unsupported index kind");
+}
+
+bool is_zero_vector(std::span<const float> vector) {
+    return std::all_of(vector.begin(), vector.end(),
+                       [](float value) { return value == 0.0f; });
 }
 
 }  // namespace
@@ -49,10 +55,44 @@ void Collection::insert(const std::string &external_id,
         throw std::invalid_argument("External id already exists");
     }
 
-    const std::uint64_t internal_id = vectors_.add(vector);
-    external_to_internal_.emplace(external_id, internal_id);
-    internal_to_external_.push_back(external_id);
-    index_->add(internal_id);
+    if (vector.size() != dim()) {
+        throw std::invalid_argument(
+            "Vector dimension does not match store dimension");
+    }
+
+    if (metric_ == Metric::Cosine && is_zero_vector(vector)) {
+        throw std::invalid_argument(
+            "Cosine collections do not support zero vectors");
+    }
+
+    const auto internal_id = static_cast<std::uint64_t>(vectors_.size());
+    const auto [external_id_it, inserted] =
+        external_to_internal_.emplace(external_id, internal_id);
+    static_cast<void>(inserted);
+
+    try {
+        internal_to_external_.push_back(external_id);
+    } catch (...) {
+        external_to_internal_.erase(external_id_it);
+        throw;
+    }
+
+    try {
+        vectors_.add(vector);
+    } catch (...) {
+        internal_to_external_.pop_back();
+        external_to_internal_.erase(external_id_it);
+        throw;
+    }
+
+    try {
+        index_->add(internal_id);
+    } catch (...) {
+        vectors_.remove_last();
+        internal_to_external_.pop_back();
+        external_to_internal_.erase(external_id_it);
+        throw;
+    }
 }
 
 std::vector<SearchResult> Collection::search(std::span<const float> query,
@@ -60,6 +100,10 @@ std::vector<SearchResult> Collection::search(std::span<const float> query,
     if (query.size() != dim()) {
         throw std::invalid_argument(
             "Query dimension does not match collection dimension");
+    }
+
+    if (metric_ == Metric::Cosine && is_zero_vector(query)) {
+        throw std::invalid_argument("Cosine query must not be a zero vector");
     }
 
     const auto internal_results = index_->search(query, top_k);
@@ -83,6 +127,10 @@ std::vector<std::vector<SearchResult>> Collection::batch_search(
 
     for (std::size_t i = 0; i < query_count; ++i) {
         const std::span<const float> query(queries.data() + (i * dim()), dim());
+        if (metric_ == Metric::Cosine && is_zero_vector(query)) {
+            throw std::invalid_argument(
+                "Cosine query must not be a zero vector");
+        }
         results.push_back(
             internal_to_external_list(index_->search(query, top_k)));
     }
