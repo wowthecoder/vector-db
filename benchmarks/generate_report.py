@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate a self-contained HTML dashboard from Google Benchmark JSON."""
+"""Generate an interactive Vega-Lite HTML dashboard from Google Benchmark JSON."""
 
 from __future__ import annotations
 
@@ -308,159 +308,147 @@ def escape(value: Any) -> str:
     return html.escape(str(value), quote=True)
 
 
-def color_for(label: str, index: int) -> str:
-    return METRIC_COLORS.get(label, FALLBACK_COLORS[index % len(FALLBACK_COLORS)])
+def color_range_for(domain: Sequence[str]) -> list[str]:
+    return [METRIC_COLORS.get(label, FALLBACK_COLORS[index % len(FALLBACK_COLORS)]) for index, label in enumerate(domain)]
 
 
-def nice_ticks(max_value: float, count: int = 5) -> tuple[float, list[float]]:
-    if max_value <= 0:
-        return 1.0, [0.0, 0.25, 0.5, 0.75, 1.0]
-    rough = max_value / count
-    power = 10 ** math.floor(math.log10(rough))
-    normalized = rough / power
-    step_factor = 1 if normalized <= 1 else 2 if normalized <= 2 else 5 if normalized <= 5 else 10
-    step = step_factor * power
-    ceiling = math.ceil(max_value / step) * step
-    return ceiling, [index * step for index in range(int(round(ceiling / step)) + 1)]
+class ChartCollector:
+    """Gathers Vega-Lite specs so `render_report` can embed one JSON payload."""
+
+    def __init__(self) -> None:
+        self._specs: dict[str, dict[str, Any]] = {}
+
+    def add(self, chart_id: str, title: str, subtitle: str, spec: Mapping[str, Any]) -> str:
+        self._specs[chart_id] = dict(spec)
+        return (
+            f'<section class="chart-card"><h3>{escape(title)}</h3><p>{escape(subtitle)}</p>'
+            f'<div id="{escape(chart_id)}" class="vega-chart"></div></section>'
+        )
+
+    def payload(self) -> str:
+        return (
+            json.dumps(self._specs)
+            .replace("&", "\\u0026")
+            .replace("<", "\\u003c")
+            .replace(">", "\\u003e")
+        )
 
 
-def line_chart(
-    chart_id: str,
-    title: str,
-    subtitle: str,
-    x_values: Sequence[int | float | str],
-    series: Mapping[str, Mapping[int | float | str, float]],
-    x_label: str,
-    y_label: str,
-) -> str:
-    if not x_values or not series:
-        return empty_chart(title, "No matching benchmark cases were found.")
-    width, height = 760, 350
-    left, right, top, bottom = 74, 24, 34, 58
-    plot_width, plot_height = width - left - right, height - top - bottom
-    all_values = [value for points in series.values() for value in points.values()]
-    ceiling, ticks = nice_ticks(max(all_values, default=0.0))
-
-    def x_position(index: int) -> float:
-        return left + (plot_width / 2 if len(x_values) == 1 else index * plot_width / (len(x_values) - 1))
-
-    def y_position(value: float) -> float:
-        return top + plot_height - value / ceiling * plot_height
-
-    content = [
-        f'<section class="chart-card"><h3>{escape(title)}</h3><p>{escape(subtitle)}</p>',
-        f'<svg id="{escape(chart_id)}" class="chart" viewBox="0 0 {width} {height}" role="img" aria-label="{escape(title)}">',
-        f'<title>{escape(title)}</title>',
-    ]
-    for tick in ticks:
-        y = y_position(tick)
-        content.append(f'<line class="grid" x1="{left}" y1="{y:.2f}" x2="{width-right}" y2="{y:.2f}"/>')
-        content.append(f'<text class="axis-label" x="{left-10}" y="{y+4:.2f}" text-anchor="end">{escape(fmt_number(tick))}</text>')
-    for index, value in enumerate(x_values):
-        x = x_position(index)
-        content.append(f'<text class="axis-label" x="{x:.2f}" y="{height-bottom+23}" text-anchor="middle">{escape(fmt_param(value))}</text>')
-    content.append(f'<text class="axis-title" x="{left+plot_width/2:.2f}" y="{height-8}" text-anchor="middle">{escape(x_label)}</text>')
-    content.append(f'<text class="axis-title" transform="translate(18 {top+plot_height/2:.2f}) rotate(-90)" text-anchor="middle">{escape(y_label)}</text>')
-
-    legend_x = left
-    for series_index, (label, points) in enumerate(series.items()):
-        color = color_for(label, series_index)
-        coordinates = [(x_position(index), y_position(points[value]), value, points[value]) for index, value in enumerate(x_values) if value in points]
-        if coordinates:
-            path = " ".join(("M" if position == 0 else "L") + f" {x:.2f} {y:.2f}" for position, (x, y, _, _) in enumerate(coordinates))
-            dash = ' stroke-dasharray="7 5"' if label == "Repeated singles" else ""
-            content.append(f'<path class="series" d="{path}" stroke="{color}"{dash}/>')
-            for x, y, x_value, value in coordinates:
-                content.append(
-                    f'<circle class="point" cx="{x:.2f}" cy="{y:.2f}" r="5" fill="{color}">'
-                    f'<title>{escape(label)} — {escape(x_label)} {escape(fmt_param(x_value))}: {escape(fmt_number(value, 3))} {escape(y_label)}</title></circle>'
-                )
-        content.append(f'<g transform="translate({legend_x} 15)"><line x1="0" y1="0" x2="22" y2="0" stroke="{color}" stroke-width="3"/><text class="legend" x="28" y="4">{escape(label)}</text></g>')
-        legend_x += 44 + len(label) * 8
-    content.append("</svg></section>")
-    return "".join(content)
-
-
-def bar_chart(
-    chart_id: str,
-    title: str,
-    subtitle: str,
-    categories: Sequence[str],
-    series: Mapping[str, Sequence[float | None]],
-    y_label: str,
-) -> str:
-    if not categories or not series:
-        return empty_chart(title, "No matching benchmark cases were found.")
-    width, height = 760, 350
-    left, right, top, bottom = 74, 24, 34, 62
-    plot_width, plot_height = width - left - right, height - top - bottom
-    values = [value for group in series.values() for value in group if value is not None]
-    ceiling, ticks = nice_ticks(max(values, default=0.0))
-    group_width = plot_width / max(len(categories), 1)
-    bar_width = min(72.0, group_width * 0.72 / max(len(series), 1))
-
-    content = [
-        f'<section class="chart-card"><h3>{escape(title)}</h3><p>{escape(subtitle)}</p>',
-        f'<svg id="{escape(chart_id)}" class="chart" viewBox="0 0 {width} {height}" role="img" aria-label="{escape(title)}"><title>{escape(title)}</title>',
-    ]
-    for tick in ticks:
-        y = top + plot_height - tick / ceiling * plot_height
-        content.append(f'<line class="grid" x1="{left}" y1="{y:.2f}" x2="{width-right}" y2="{y:.2f}"/>')
-        content.append(f'<text class="axis-label" x="{left-10}" y="{y+4:.2f}" text-anchor="end">{escape(fmt_number(tick))}</text>')
-    for category_index, category in enumerate(categories):
-        center = left + (category_index + 0.5) * group_width
-        content.append(f'<text class="axis-label" x="{center:.2f}" y="{height-bottom+25}" text-anchor="middle">{escape(category)}</text>')
-    content.append(f'<text class="axis-title" transform="translate(18 {top+plot_height/2:.2f}) rotate(-90)" text-anchor="middle">{escape(y_label)}</text>')
-
-    legend_x = left
-    series_items = list(series.items())
-    total_width = bar_width * len(series_items)
-    for series_index, (label, group) in enumerate(series_items):
-        color = color_for(label, series_index)
-        for category_index, value in enumerate(group):
-            if value is None:
-                continue
-            center = left + (category_index + 0.5) * group_width
-            x = center - total_width / 2 + series_index * bar_width
-            bar_height = value / ceiling * plot_height
-            y = top + plot_height - bar_height
-            content.append(
-                f'<rect class="bar" x="{x+2:.2f}" y="{y:.2f}" width="{max(bar_width-4, 1):.2f}" height="{bar_height:.2f}" fill="{color}">'
-                f'<title>{escape(label)} — {escape(category)}: {escape(fmt_number(value, 3))} {escape(y_label)}</title></rect>'
-            )
-        content.append(f'<g transform="translate({legend_x} 15)"><rect x="0" y="-7" width="16" height="10" rx="2" fill="{color}"/><text class="legend" x="23" y="3">{escape(label)}</text></g>')
-        legend_x += 42 + len(label) * 8
-    content.append("</svg></section>")
-    return "".join(content)
-
-
-def empty_chart(title: str, message: str) -> str:
+def empty_card(title: str, message: str) -> str:
     return f'<section class="chart-card empty"><h3>{escape(title)}</h3><p>{escape(message)}</p></section>'
+
+
+def line_spec(
+    values: list[dict[str, Any]],
+    x_field: str,
+    x_title: str,
+    y_title: str,
+    color_domain: Sequence[str],
+    color_range: Sequence[str],
+    dash: bool = False,
+) -> dict[str, Any]:
+    encoding: dict[str, Any] = {
+        "x": {"field": x_field, "type": "ordinal", "title": x_title},
+        "y": {"field": "value", "type": "quantitative", "title": y_title},
+        "color": {
+            "field": "series",
+            "type": "nominal",
+            "title": None,
+            "scale": {"domain": list(color_domain), "range": list(color_range)},
+        },
+        "tooltip": [
+            {"field": "series", "type": "nominal", "title": "Series"},
+            {"field": x_field, "type": "ordinal", "title": x_title},
+            {"field": "value", "type": "quantitative", "title": y_title, "format": ".3f"},
+        ],
+    }
+    if dash:
+        encoding["strokeDash"] = {
+            "field": "series",
+            "type": "nominal",
+            "scale": {
+                "domain": list(color_domain),
+                "range": [[7, 5] if label == "Repeated singles" else [1, 0] for label in color_domain],
+            },
+            "legend": None,
+        }
+    return {
+        "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+        "data": {"values": values},
+        "mark": {"type": "line", "point": True},
+        "encoding": encoding,
+        "width": "container",
+        "height": 280,
+        "autosize": {"type": "fit", "contains": "padding"},
+    }
+
+
+def bar_spec(
+    values: list[dict[str, Any]],
+    category_title: str,
+    y_title: str,
+    series_domain: Sequence[str],
+    series_range: Sequence[str],
+    grouped: bool,
+) -> dict[str, Any]:
+    encoding: dict[str, Any] = {
+        "x": {"field": "category", "type": "ordinal", "title": category_title},
+        "y": {"field": "value", "type": "quantitative", "title": y_title},
+        "color": {
+            "field": "series",
+            "type": "nominal",
+            "title": None,
+            "scale": {"domain": list(series_domain), "range": list(series_range)},
+        },
+        "tooltip": [
+            {"field": "series", "type": "nominal", "title": "Series"},
+            {"field": "category", "type": "ordinal", "title": category_title},
+            {"field": "value", "type": "quantitative", "title": y_title, "format": ".3f"},
+        ],
+    }
+    if grouped:
+        encoding["xOffset"] = {"field": "series", "type": "nominal"}
+    return {
+        "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+        "data": {"values": values},
+        "mark": "bar",
+        "encoding": encoding,
+        "width": "container",
+        "height": 280,
+        "autosize": {"type": "fit", "contains": "padding"},
+    }
 
 
 def result_matches(result: Result, **params: Any) -> bool:
     return all(result.params.get(key) == value for key, value in params.items())
 
 
-def make_search_charts(results: Sequence[Result], canonical: Mapping[str, Any]) -> str:
+def make_search_charts(results: Sequence[Result], canonical: Mapping[str, Any], collector: ChartCollector) -> str:
     searches = [result for result in results if result.operation == "search"]
     definitions = [
         ("search-count", "Collection-size scaling", f"dimension={fmt_param(canonical['dimension'])}, top_k={fmt_param(canonical['top_k'])}", "count", {"dimension": canonical["dimension"], "top_k": canonical["top_k"]}),
         ("search-dimension", "Dimension scaling", f"count={fmt_param(canonical['count'])}, top_k={fmt_param(canonical['top_k'])}", "dimension", {"count": canonical["count"], "top_k": canonical["top_k"]}),
         ("search-top-k", "Result-count scaling", f"count={fmt_param(canonical['count'])}, dimension={fmt_param(canonical['dimension'])}", "top_k", {"count": canonical["count"], "dimension": canonical["dimension"]}),
     ]
-    charts: list[str] = []
+    cards: list[str] = []
     for chart_id, title, subtitle, axis, fixed in definitions:
         selected = [result for result in searches if result_matches(result, **fixed) and axis in result.params]
         x_values = sorted({result.params[axis] for result in selected})
-        series: dict[str, dict[Any, float]] = defaultdict(dict)
-        for result in selected:
-            series[result.metric or "Unspecified"][result.params[axis]] = result.real_ms
-        charts.append(line_chart(chart_id, title, subtitle, x_values, series, axis.replace("_", " "), "wall ms"))
-    return '<div class="chart-grid">' + "".join(charts) + "</div>"
+        metrics = sorted({result.metric or "Unspecified" for result in selected})
+        if not x_values or not metrics:
+            cards.append(empty_card(title, "No matching benchmark cases were found."))
+            continue
+        values = [
+            {axis: result.params[axis], "series": result.metric or "Unspecified", "value": result.real_ms}
+            for result in selected
+        ]
+        spec = line_spec(values, axis, axis.replace("_", " "), "wall ms", metrics, color_range_for(metrics))
+        spec["encoding"]["x"]["sort"] = x_values
+        cards.append(collector.add(chart_id, title, subtitle, spec))
+    return '<div class="chart-grid">' + "".join(cards) + "</div>"
 
 
-def make_batch_section(results: Sequence[Result], canonical: Mapping[str, Any]) -> str:
+def make_batch_section(results: Sequence[Result], canonical: Mapping[str, Any], collector: ChartCollector) -> str:
     candidates = [
         result for result in results
         if result.operation in {"batch_search", "repeated_search"}
@@ -468,19 +456,34 @@ def make_batch_section(results: Sequence[Result], canonical: Mapping[str, Any]) 
         and "query_count" in result.params
     ]
     metrics = sorted({result.metric or "Unspecified" for result in candidates})
-    charts: list[str] = []
+    color_domain = ["Batch", "Repeated singles"]
+    color_range = color_range_for(color_domain)
+    cards: list[str] = []
     rows: list[str] = []
     for metric in metrics:
         metric_results = [result for result in candidates if (result.metric or "Unspecified") == metric]
         x_values = sorted({result.params["query_count"] for result in metric_results})
-        series: dict[str, dict[Any, float]] = {"Batch": {}, "Repeated singles": {}}
+        per_query: dict[str, dict[Any, float]] = {"Batch": {}, "Repeated singles": {}}
         by_identity: dict[tuple[str, Any], Result] = {}
         for result in metric_results:
             method = "Batch" if result.operation == "batch_search" else "Repeated singles"
             query_count = result.params["query_count"]
-            series[method][query_count] = result.real_ms / float(query_count)
+            per_query[method][query_count] = result.real_ms / float(query_count)
             by_identity[(result.operation, query_count)] = result
-        charts.append(line_chart(f"batch-{metric.lower()}", f"{metric} batch behavior", "Lower is better; latency normalized per query.", x_values, series, "queries per call", "wall ms/query"))
+        title = f"{metric} batch behavior"
+        subtitle = "Lower is better; latency normalized per query."
+        values = [
+            {"query_count": query_count, "series": method, "value": per_query[method][query_count]}
+            for method in color_domain
+            for query_count in x_values
+            if query_count in per_query[method]
+        ]
+        if values:
+            spec = line_spec(values, "query_count", "queries per call", "wall ms/query", color_domain, color_range, dash=True)
+            spec["encoding"]["x"]["sort"] = x_values
+            cards.append(collector.add(f"batch-{metric.lower()}", title, subtitle, spec))
+        else:
+            cards.append(empty_card(title, "No matching benchmark cases were found."))
         for query_count in x_values:
             batch = by_identity.get(("batch_search", query_count))
             repeated = by_identity.get(("repeated_search", query_count))
@@ -502,7 +505,7 @@ def make_batch_section(results: Sequence[Result], canonical: Mapping[str, Any]) 
         + "".join(rows)
         + "</tbody></table></div>"
     )
-    return '<div class="chart-grid">' + "".join(charts) + "</div>" + table
+    return '<div class="chart-grid">' + "".join(cards) + "</div>" + table
 
 
 def make_lsh_section(results: Sequence[Result]) -> str:
@@ -518,7 +521,7 @@ def make_lsh_section(results: Sequence[Result]) -> str:
         ),
     )
     if not lsh_results:
-        return empty_chart(
+        return empty_card(
             "LSH recall and latency",
             "No random-projection LSH benchmark cases were found.",
         )
@@ -591,7 +594,7 @@ def make_lsh_section(results: Sequence[Result]) -> str:
     )
 
 
-def make_glove_section(results: Sequence[Result]) -> str:
+def make_glove_section(results: Sequence[Result], collector: ChartCollector) -> str:
     glove_results = sorted(
         (
             result
@@ -607,7 +610,7 @@ def make_glove_section(results: Sequence[Result]) -> str:
         ),
     )
     if not glove_results:
-        return empty_chart(
+        return empty_card(
             "GloVe-25 Flat and LSH results",
             "No GloVe-25 dataset benchmark cases were found.",
         )
@@ -652,35 +655,42 @@ def make_glove_section(results: Sequence[Result]) -> str:
         else None
         for result in glove_results
     ]
+    category_order = list(dict.fromkeys(categories))
+    series_domain = ["Brute force (Flat)", "Random projection LSH"]
+    series_range = color_range_for(series_domain)
+
+    def tidy_values(flat_group: Sequence[float | None], lsh_group: Sequence[float | None]) -> list[dict[str, Any]]:
+        values: list[dict[str, Any]] = []
+        for label, group in ((series_domain[0], flat_group), (series_domain[1], lsh_group)):
+            for category, value in zip(categories, group):
+                if value is not None:
+                    values.append({"category": category, "series": label, "value": value})
+        return values
+
+    latency_spec = bar_spec(tidy_values(flat_latency, lsh_latency), "Configuration", "wall ms/query", series_domain, series_range, grouped=True)
+    latency_spec["encoding"]["x"]["sort"] = category_order
+    recall_spec = bar_spec(tidy_values(flat_recall, lsh_recall), "Configuration", "%", series_domain, series_range, grouped=True)
+    recall_spec["encoding"]["x"]["sort"] = category_order
+
     charts = (
         '<div class="chart-grid">'
-        + bar_chart(
+        + collector.add(
             "glove-latency",
             "GloVe-25 search latency",
             (
                 "Flat scans every vector; lower is better. LSH labels show "
                 "tables, signature bits, and candidate limit."
             ),
-            categories,
-            {
-                "Brute force (Flat)": flat_latency,
-                "Random projection LSH": lsh_latency,
-            },
-            "wall ms/query",
+            latency_spec,
         )
-        + bar_chart(
+        + collector.add(
             "glove-recall",
             "GloVe-25 Recall@K",
             (
                 "Recall against the supplied exact neighbors; higher is "
                 "better. See the table for the recall query count."
             ),
-            categories,
-            {
-                "Brute force (Flat)": flat_recall,
-                "Random projection LSH": lsh_recall,
-            },
-            "%",
+            recall_spec,
         )
         + "</div>"
     )
@@ -753,20 +763,38 @@ def make_glove_section(results: Sequence[Result]) -> str:
     )
 
 
-def make_write_charts(results: Sequence[Result]) -> str:
+def make_write_charts(results: Sequence[Result], collector: ChartCollector) -> str:
     inserts = sorted((result for result in results if result.operation == "insert"), key=lambda result: result.params.get("count", 0))
     insert_categories = [fmt_param(result.params.get("count", "?")) for result in inserts]
-    insert_values = [result.items_per_second for result in inserts]
-    insert_chart = bar_chart("insert-throughput", "Insertion throughput", "Google Benchmark reported items per second.", insert_categories, {"Insert": insert_values}, "vectors/s")
+    insert_values = [
+        {"category": category, "series": "Insert", "value": value}
+        for category, value in zip(insert_categories, (result.items_per_second for result in inserts))
+        if value is not None
+    ]
+    if insert_values:
+        insert_spec = bar_spec(insert_values, "Vector count", "vectors/s", ["Insert"], color_range_for(["Insert"]), grouped=False)
+        insert_spec["encoding"]["x"]["sort"] = insert_categories
+        insert_chart = collector.add("insert-throughput", "Insertion throughput", "Google Benchmark reported items per second.", insert_spec)
+    else:
+        insert_chart = empty_card("Insertion throughput", "No matching benchmark cases were found.")
 
     persistence = [result for result in results if result.operation in {"save", "load"}]
     counts = sorted({result.params.get("count") for result in persistence if result.params.get("count") is not None})
-    values: dict[str, list[float | None]] = {"Save": [], "Load": []}
-    for count in counts:
+    persistence_categories = [fmt_param(count) for count in counts]
+    persistence_domain = ["Save", "Load"]
+    persistence_range = color_range_for(persistence_domain)
+    persistence_values: list[dict[str, Any]] = []
+    for count, category in zip(counts, persistence_categories):
         for operation, label in (("save", "Save"), ("load", "Load")):
             match = next((result for result in persistence if result.operation == operation and result.params.get("count") == count), None)
-            values[label].append(match.real_ms if match else None)
-    persistence_chart = bar_chart("persistence-latency", "Persistence latency", "Warm-cache wall latency; lower is better.", [fmt_param(count) for count in counts], values, "wall ms")
+            if match is not None:
+                persistence_values.append({"category": category, "series": label, "value": match.real_ms})
+    if persistence_values:
+        persistence_spec = bar_spec(persistence_values, "Vector count", "wall ms", persistence_domain, persistence_range, grouped=True)
+        persistence_spec["encoding"]["x"]["sort"] = persistence_categories
+        persistence_chart = collector.add("persistence-latency", "Persistence latency", "Warm-cache wall latency; lower is better.", persistence_spec)
+    else:
+        persistence_chart = empty_card("Persistence latency", "No matching benchmark cases were found.")
     return '<div class="chart-grid">' + insert_chart + persistence_chart + "</div>"
 
 
@@ -860,13 +888,60 @@ def quality_warnings(context: Mapping[str, Any], results: Sequence[Result], warn
 
 STYLE = """
 :root{color-scheme:light;--bg:#f8fafc;--panel:#fff;--text:#172033;--muted:#64748b;--line:#dbe3ee;--accent:#2563eb;--good:#047857;--bad:#b91c1c;--warn:#92400e}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{max-width:1500px;margin:auto;padding:32px}h1{font-size:2rem;margin:0}h2{font-size:1.35rem;margin:38px 0 14px}h3{font-size:1.05rem;margin:0}p{color:var(--muted);margin:5px 0 14px}.subtitle{font-size:1rem}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:24px 0}.card,.chart-card,.notice,.table-wrap{background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 2px #0f172a0a}.card{padding:14px 16px}.card span{display:block;color:var(--muted);font-size:.78rem;text-transform:uppercase;letter-spacing:.04em}.card strong{display:block;margin-top:3px;font-size:1rem}.notice{border-left:5px solid #f59e0b;padding:12px 18px;margin:14px 0}.notice strong{color:var(--warn)}.notice ul{margin:6px 0;padding-left:22px}.chart-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(440px,1fr));gap:16px}.chart-card{padding:16px;min-width:0}.chart-card.empty{min-height:150px}.chart{display:block;width:100%;height:auto}.grid{stroke:#e2e8f0;stroke-width:1}.axis-label,.legend{fill:#64748b;font-size:12px}.axis-title{fill:#334155;font-size:12px;font-weight:600}.series{fill:none;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}.point{stroke:#fff;stroke-width:2}.bar{opacity:.9}.table-wrap{overflow:auto;margin:14px 0}table{width:100%;border-collapse:collapse;white-space:nowrap}th,td{padding:10px 12px;border-bottom:1px solid #e8edf4;text-align:right}th{position:sticky;top:0;background:#f1f5f9;color:#334155;font-size:.78rem;text-transform:uppercase;letter-spacing:.03em;cursor:pointer}th:first-child,th:nth-child(2),td:first-child,td:nth-child(2){text-align:left}tbody tr:hover{background:#f8fafc}.delta.positive{color:var(--good);font-weight:700}.delta.negative{color:var(--bad);font-weight:700}.filter{display:flex;align-items:center;gap:10px;margin:12px 0;color:#475569;font-weight:600}.filter input{min-width:300px;max-width:100%;padding:9px 12px;border:1px solid #cbd5e1;border-radius:8px;background:white}footer{margin-top:38px;color:var(--muted);font-size:.85rem}@media(max-width:600px){main{padding:20px 12px}.chart-grid{grid-template-columns:1fr}.filter{display:block}.filter input{display:block;margin-top:6px;width:100%;min-width:0}}@media print{body{background:white}main{max-width:none;padding:0}.chart-card,.card,.table-wrap,.notice{box-shadow:none;break-inside:avoid}.filter{display:none}th{position:static}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{max-width:1500px;margin:auto;padding:32px}h1{font-size:2rem;margin:0}h2{font-size:1.35rem;margin:38px 0 14px}h3{font-size:1.05rem;margin:0}p{color:var(--muted);margin:5px 0 14px}.subtitle{font-size:1rem}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:24px 0}.card,.chart-card,.notice,.table-wrap{background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 2px #0f172a0a}.card{padding:14px 16px}.card span{display:block;color:var(--muted);font-size:.78rem;text-transform:uppercase;letter-spacing:.04em}.card strong{display:block;margin-top:3px;font-size:1rem}.notice{border-left:5px solid #f59e0b;padding:12px 18px;margin:14px 0}.notice strong{color:var(--warn)}.notice ul{margin:6px 0;padding-left:22px}.chart-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(440px,1fr));gap:16px}.chart-card{padding:16px;min-width:0}.chart-card.empty{min-height:150px}.vega-chart{width:100%}.table-wrap{overflow:auto;margin:14px 0}table{width:100%;border-collapse:collapse;white-space:nowrap}th,td{padding:10px 12px;border-bottom:1px solid #e8edf4;text-align:right}th{position:sticky;top:0;background:#f1f5f9;color:#334155;font-size:.78rem;text-transform:uppercase;letter-spacing:.03em;cursor:pointer}th:first-child,th:nth-child(2),td:first-child,td:nth-child(2){text-align:left}tbody tr:hover{background:#f8fafc}.delta.positive{color:var(--good);font-weight:700}.delta.negative{color:var(--bad);font-weight:700}.filter{display:flex;align-items:center;gap:10px;margin:12px 0;color:#475569;font-weight:600}.filter input{min-width:300px;max-width:100%;padding:9px 12px;border:1px solid #cbd5e1;border-radius:8px;background:white}footer{margin-top:38px;color:var(--muted);font-size:.85rem}@media(max-width:600px){main{padding:20px 12px}.chart-grid{grid-template-columns:1fr}.filter{display:block}.filter input{display:block;margin-top:6px;width:100%;min-width:0}}@media print{body{background:white}main{max-width:none;padding:0}.chart-card,.card,.table-wrap,.notice{box-shadow:none;break-inside:avoid}.filter{display:none}th{position:static}}
 """
 
 
 SCRIPT = """
 document.querySelectorAll('[data-table-filter]').forEach(input=>{input.addEventListener('input',()=>{const table=document.getElementById(input.dataset.tableFilter);const query=input.value.trim().toLowerCase();table.querySelectorAll('tbody tr').forEach(row=>{row.hidden=!row.dataset.search.includes(query)})})});
 document.querySelectorAll('th[data-sortable]').forEach(header=>{const activate=()=>{const table=header.closest('table');const body=table.tBodies[0];const index=[...header.parentElement.children].indexOf(header);const ascending=header.dataset.direction!=='asc';[...header.parentElement.children].forEach(item=>delete item.dataset.direction);header.dataset.direction=ascending?'asc':'desc';const rows=[...body.rows];rows.sort((a,b)=>{const av=a.cells[index].dataset.sort||'';const bv=b.cells[index].dataset.sort||'';const an=Number(av),bn=Number(bv);const value=av!==''&&bv!==''&&Number.isFinite(an)&&Number.isFinite(bn)?an-bn:av.localeCompare(bv);return ascending?value:-value});rows.forEach(row=>body.appendChild(row))};header.addEventListener('click',activate);header.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();activate()}})});
+"""
+
+# Pinned to exact minors for reproducible output; bump these when adopting a newer Vega-Lite release.
+VEGA_CDN_SCRIPTS = (
+    "https://cdn.jsdelivr.net/npm/vega@5.25.0",
+    "https://cdn.jsdelivr.net/npm/vega-lite@5.16.3",
+    "https://cdn.jsdelivr.net/npm/vega-embed@6.29.0",
+)
+
+VEGA_CONFIG = {
+    "background": None,
+    "font": 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    "axis": {
+        "labelColor": "#64748b",
+        "titleColor": "#334155",
+        "gridColor": "#e2e8f0",
+        "domainColor": "#cbd5e1",
+        "tickColor": "#cbd5e1",
+    },
+    "legend": {"labelColor": "#334155", "titleColor": "#334155"},
+    "view": {"stroke": None},
+}
+
+
+def vega_embed_script(payload: str) -> str:
+    config = json.dumps(VEGA_CONFIG)
+    return f"""
+const VEGA_SPECS = {payload};
+const VEGA_CONFIG = {config};
+if (typeof vegaEmbed === 'undefined') {{
+  Object.keys(VEGA_SPECS).forEach(id => {{
+    const mount = document.getElementById(id);
+    if (mount) mount.textContent = 'Chart unavailable (offline): the Vega-Lite CDN could not be loaded.';
+  }});
+}} else {{
+  Object.entries(VEGA_SPECS).forEach(([id, spec]) => {{
+    vegaEmbed('#' + CSS.escape(id), Object.assign({{config: VEGA_CONFIG}}, spec), {{
+      renderer: 'svg',
+      mode: 'vega-lite',
+      actions: {{export: true, source: false, compiled: false, editor: false}}
+    }}).catch(error => {{
+      const mount = document.getElementById(id);
+      if (mount) mount.textContent = 'Chart failed to render: ' + error.message;
+      console.error(error);
+    }});
+  }});
+}}
 """
 
 
@@ -884,26 +959,32 @@ def render_report(title: str, context: Mapping[str, Any], results: Sequence[Resu
         warning_html = '<section class="notice"><strong>Measurement notes</strong><ul>' + "".join(f"<li>{escape(message)}</li>" for message in warnings) + "</ul></section>"
     canonical_description = ", ".join(f"{key.replace('_', ' ')}={fmt_param(value)}" for key, value in canonical.items())
     overview = canonical_results(results, canonical)
+    collector = ChartCollector()
+    glove_section = make_glove_section(results, collector)
+    search_charts = make_search_charts(results, canonical, collector)
+    batch_section = make_batch_section(results, canonical, collector)
+    write_charts = make_write_charts(results, collector)
+    cdn_scripts = "".join(f'<script src="{escape(url)}"></script>' for url in VEGA_CDN_SCRIPTS)
     return f"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{escape(title)}</title><style>{STYLE}</style></head>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{escape(title)}</title><style>{STYLE}</style>{cdn_scripts}</head>
 <body><main><header><h1>{escape(title)}</h1><p class="subtitle">Human-readable summary of one Google Benchmark result file.</p></header>
 {context_cards(context, results)}{warning_html}
 <h2>Canonical workload</h2><p>{escape(canonical_description)}. Wall time is the primary latency; reported items/s may use Google Benchmark's CPU clock.</p>
 {results_table(overview, "canonical-results", False)}
 <h2>GloVe-25 dataset</h2><p>Flat and random-projection LSH use the same ANN-Benchmarks cosine vectors and supplied exact ground truth. Search latency excludes dataset loading, index construction, and recall evaluation.</p>
-{make_glove_section(results)}
+{glove_section}
 <h2>Search scaling</h2><p>Each chart changes one workload dimension while holding the others at the canonical values. Lower is better.</p>
-{make_search_charts(results, canonical)}
+{search_charts}
 <h2>LSH recall and latency</h2><p>Latency is measured per approximate cosine query. Recall is measured against exact FlatIndex top-k results; higher is better.</p>
 {make_lsh_section(results)}
 <h2>Batch search versus repeated searches</h2><p>Wall time is divided by the number of queries so the two APIs are directly comparable.</p>
-{make_batch_section(results, canonical)}
+{batch_section}
 <h2>Insertion and persistence</h2>
-{make_write_charts(results)}
+{write_charts}
 <h2>Complete results</h2><p>Click a column heading to sort. Effective bytes/s is a modeled scan rate, not measured disk or network traffic.</p>
 {results_table(results, "all-results", True)}
-<footer>Generated from Google Benchmark JSON by benchmarks/generate_report.py. The report is self-contained and makes no network requests.</footer>
-</main><script>{SCRIPT}</script></body></html>"""
+<footer>Generated from Google Benchmark JSON by benchmarks/generate_report.py. Charts render client-side via Vega-Lite loaded from a CDN; tables and metadata remain readable offline.</footer>
+</main><script>{SCRIPT}</script><script>{vega_embed_script(collector.payload())}</script></body></html>"""
 
 
 def build_parser() -> argparse.ArgumentParser:
