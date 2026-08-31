@@ -6,6 +6,7 @@
 #include <span>
 #include <vector>
 
+#include "vectordb/types.hpp"
 #include "vectordb/vector_store.hpp"
 
 namespace vectordb::benchmarks {
@@ -21,14 +22,16 @@ class AnnDataset {
     std::size_t dimension() const;
     std::size_t query_count() const;
     std::size_t neighbors_per_query() const;
+    Metric metric() const;
 
     std::span<const float> query(std::size_t query_index) const;
     std::span<const std::uint64_t> neighbors(std::size_t query_index) const;
 
    private:
-    explicit AnnDataset(std::size_t dimension);
+    explicit AnnDataset(std::size_t dimension, Metric metric);
 
     VectorStore vectors_;
+    Metric metric_;
     std::vector<float> queries_;
     std::vector<std::uint64_t> neighbors_;
     std::size_t neighbors_per_query_ = 0;
