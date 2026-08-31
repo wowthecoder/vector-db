@@ -12,6 +12,7 @@ namespace vectordb {
 enum class IndexKind {
     Flat,
     RandomProjectionLsh,
+    Hnsw,
 };
 
 class Index {

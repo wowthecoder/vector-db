@@ -8,6 +8,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "vectordb/indexes/hnsw_index.hpp"
 #include "vectordb/indexes/index.hpp"
 #include "vectordb/indexes/random_projection_lsh_index.hpp"
 #include "vectordb/types.hpp"
@@ -18,6 +19,7 @@ namespace vectordb {
 struct CollectionOptions {
     IndexKind index_kind = IndexKind::Flat;
     RandomProjectionLshConfig lsh;
+    HnswConfig hnsw;
 };
 
 class Collection {
@@ -44,6 +46,7 @@ class Collection {
     Metric metric() const;
     IndexKind index_kind() const;
     const RandomProjectionLshConfig &lsh_config() const;
+    const HnswConfig &hnsw_config() const;
 
    private:
     Metric metric_;
