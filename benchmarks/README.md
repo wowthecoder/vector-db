@@ -89,6 +89,48 @@ Recall is computed over 50 fixed-seed queries. It is a quality measurement for
 comparing configurations, not a promise that arbitrary workloads have the same
 recall.
 
+## ANN-Benchmarks datasets
+
+Beyond the synthetic fixtures used by the other benchmark families, this suite
+prepares real vector datasets distributed by
+[ANN-Benchmarks](https://ann-benchmarks.com/). Only `glove-25-angular` is
+currently wired into a C++ benchmark (see "GloVe-25 ANN dataset benchmark"
+below); the rest are prepared and ready in `benchmark-data/` for upcoming L2
+and IVF work, per the roadmap in `Roadmap.md`.
+
+| Dataset | Dim | Train / Test | Site metric | Our metric | Why include it |
+| --- | --- | --- | --- | --- | --- |
+| `glove-25-angular` | 25 | 1,183,514 / 10,000 | angular | Cosine | Already wired into `BM_Glove25FlatSearch`/`BM_Glove25LshSearch` as the pilot real-data cosine/LSH benchmark. |
+| `sift-128-euclidean` | 128 | 1,000,000 / 10,000 | euclidean | L2 | The field-standard L2 reference; the suite has zero real-data L2 coverage today. Sets up IVF (L2-only). |
+| `glove-100-angular` | 100 | 1,183,514 / 10,000 | angular | Cosine | Realistic embedding dimension for cosine/LSH; same file family as `glove-25-angular`, so near-zero integration cost. |
+| `gist-960-euclidean` | 960 | 1,000,000 / 1,000 | euclidean | L2 | High-dimension L2 stress test — shows how Flat/LSH degrade with dimension on real data. |
+| `nytimes-256-angular` | 256 | ~290,000 / 10,000 | angular | Cosine | Mid-size cosine dataset at a higher dimension than `glove-25/100`; optional. |
+| `fashion-mnist-784-euclidean` | 784 | 60,000 / 10,000 | euclidean | L2 | Small and fast L2 dataset — good for quick CI-style runs. |
+
+Download and prepare any of these with `prepare_ann_dataset.py`. The script
+downloads the source `.hdf5` file into `benchmark-data/` automatically when
+it is missing, so no manual download step is needed for a known dataset name:
+
+```sh
+python3 -m pip install h5py numpy
+python3 benchmarks/prepare_ann_dataset.py --dataset sift-128-euclidean
+python3 benchmarks/prepare_ann_dataset.py --all   # prepare every dataset above
+```
+
+`--dataset`/`--all` always use `benchmark-data/<name>.hdf5` and
+`benchmark-data/<name>.vdbann` (override the directory with `--data-dir`). The
+original two-positional-argument form (`prepare_ann_dataset.py input.hdf5
+output.vdbann`) still works and also auto-downloads when `input` is missing
+and its filename matches one of the datasets above. `gist-960-euclidean` is
+almost 4 GB; expect the download to take a while.
+
+The conversion format records a distance code so both angular (cosine) and
+euclidean (L2) source datasets convert cleanly; only the angular/Cosine path
+is currently read by a C++ benchmark. If a download fails TLS verification
+because a mirror serves an older certificate chain that this Python's OpenSSL
+rejects under strict X.509 checks (while `curl`/the OS trust store accept it),
+the script automatically retries that download with `curl`.
+
 ## GloVe-25 ANN dataset benchmark
 
 The GloVe benchmark measures Flat and random-projection LSH search against the
@@ -97,14 +139,13 @@ same 1,183,514-vector cosine dataset and the exact ground truth distributed by
 LSH construction, and recall evaluation occur outside the timed search loop.
 The prepared dataset is loaded once and shared by all cases in the process.
 
-Download `glove-25-angular.hdf5` into `benchmark-data/`, install the conversion
-script's dependencies, and prepare the dependency-free input used by C++:
+Install the conversion script's dependencies, then prepare the dependency-free
+input used by C++ (see "ANN-Benchmarks datasets" above; this downloads
+`glove-25-angular.hdf5` into `benchmark-data/` automatically):
 
 ```sh
 python3 -m pip install h5py numpy
-python3 benchmarks/prepare_ann_dataset.py \
-    benchmark-data/glove-25-angular.hdf5 \
-    benchmark-data/glove-25-angular.vdbann
+python3 benchmarks/prepare_ann_dataset.py --dataset glove-25-angular
 ```
 
 Both files under `benchmark-data/` are ignored by Git. The conversion preserves
