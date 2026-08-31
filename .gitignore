@@ -10,4 +10,5 @@ __pycache__/
 *.exe
 *.log
 build-benchmarks/
+build-asan/
 benchmark-data/

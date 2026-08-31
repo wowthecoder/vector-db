@@ -26,4 +26,9 @@ class TopKAccumulator {
 float score_vector(Metric metric, const float *a, const float *b,
                    std::size_t dimension);
 
+// True when a larger score is closer for the given metric (Dot, Cosine).
+// False when a smaller score is closer (L2). Shared so every index orients
+// its heaps and comparators the same way as TopKAccumulator.
+bool higher_is_better(Metric metric);
+
 }  // namespace vectordb::index_detail
