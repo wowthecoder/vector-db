@@ -16,9 +16,9 @@ endif()
 
 add_executable(vectordb_benchmarks
     ann_dataset.cpp
+    ann_search_benchmarks.cpp
     batch_search_benchmarks.cpp
     benchmark_utils.cpp
-    glove_25_benchmarks.cpp
     insert_benchmarks.cpp
     lsh_recall_benchmarks.cpp
     persistence_benchmarks.cpp
@@ -38,5 +38,5 @@ target_compile_options(vectordb_benchmarks PRIVATE
 )
 
 target_compile_definitions(vectordb_benchmarks PRIVATE
-    VECTORDB_GLOVE25_DEFAULT_PATH="${PROJECT_SOURCE_DIR}/benchmark-data/glove-25-angular.vdbann"
+    VECTORDB_ANN_DEFAULT_PATH="${PROJECT_SOURCE_DIR}/benchmark-data/glove-25-angular.vdbann"
 )
