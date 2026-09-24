@@ -138,7 +138,7 @@ class ReportTestCase(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertIn("boom", warnings[0])
 
-    def test_rendered_report_is_escaped_self_contained_and_complete(self):
+    def test_rendered_report_is_escaped_and_complete(self):
         rows = [
             benchmark_row("BM_CollectionInsert/10000/128", items_per_second=2_000_000),
             benchmark_row("BM_CollectionSave/10000/128/real_time", 5.0, 3.0),
@@ -208,8 +208,10 @@ class ReportTestCase(unittest.TestCase):
         self.assertIn("Insertion and persistence", rendered)
         self.assertIn("Complete results", rendered)
         self.assertIn("only one repetition", rendered)
-        self.assertNotIn("https://", rendered)
-        self.assertNotIn("http://", rendered)
+        self.assertIn("vega-embed", rendered)
+        self.assertIn("VEGA_SPECS", rendered)
+        self.assertIn("vegaEmbed(", rendered)
+        self.assertIn('"L2"', rendered)
         self.assertGreaterEqual(rendered.count('data-search="'), len(results))
 
     def test_invalid_json_has_clear_cli_error(self):

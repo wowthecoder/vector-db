@@ -177,7 +177,7 @@ Save machine-readable results for later comparison:
 
 ## Generate an HTML report
 
-Turn a Google Benchmark JSON file into a self-contained dashboard:
+Turn a Google Benchmark JSON file into an interactive Vega-Lite dashboard:
 
 ```sh
 python3 benchmarks/generate_report.py benchmark-results.json \
@@ -185,16 +185,19 @@ python3 benchmarks/generate_report.py benchmark-results.json \
 ```
 
 The generator requires Python 3.10 or newer and has no third-party package
-dependencies.
+dependencies. Viewing the generated report, however, now needs network access:
+charts render client-side via Vega-Lite, loaded from a CDN (`cdn.jsdelivr.net`).
 
 Open `benchmark-report.html` in any modern browser. The report contains run
 metadata and measurement warnings, a canonical-workload table, search-scaling
 charts, an LSH latency/recall table, GloVe Flat-versus-LSH latency and recall
 charts, batch-versus-repeated-search comparisons, insertion and persistence
-charts, and a sortable, filterable table of every benchmark case. All CSS,
-JavaScript, and SVG charts are embedded in the HTML; generation requires only
-the Python standard library and viewing the report does not require a network
-connection.
+charts, and a sortable, filterable table of every benchmark case. Charts are
+declarative Vega-Lite specs embedded in the page and rendered by Vega-Embed,
+which gives them rich tooltips, zoom/pan, and click-to-toggle legend series.
+If the CDN is unreachable, each chart falls back to a "chart unavailable"
+notice instead of a blank area; tables and metadata remain fully readable
+offline.
 
 When an input contains repeated benchmark runs, the report uses aggregate
 medians and displays the wall-time coefficient of variation. If aggregate rows
