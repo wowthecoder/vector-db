@@ -108,3 +108,30 @@ auto results =
 New inserts are added to the LSH tables immediately. Saving a collection
 preserves its index kind and LSH configuration; loading deterministically
 reconstructs the index from the stored vectors and seed.
+
+HNSW supports all three metrics and generally gives better recall/latency
+tradeoffs than LSH:
+
+```cpp
+vectordb::CollectionOptions options{
+    .index_kind = vectordb::IndexKind::Hnsw,
+    .hnsw =
+        {
+            .M = 16,
+            .ef_construction = 200,
+            .ef_search = 50,
+            .seed = 42,
+        },
+};
+
+vectordb::Collection collection(3, vectordb::Metric::L2, options);
+
+collection.insert("first", std::vector<float>{1.0f, 0.0f, 0.0f});
+auto results =
+    collection.search(std::vector<float>{1.0f, 0.0f, 0.0f}, 1);
+```
+
+New inserts are added to the graph immediately. Like LSH, saving a collection
+preserves its index kind and HNSW configuration only; loading replays every
+insert in order, which deterministically rebuilds the identical graph from
+the stored seed. See `docs/HNSW_TODO.md` for the algorithm and design notes.

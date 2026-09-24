@@ -62,6 +62,19 @@ class ReportTestCase(unittest.TestCase):
                     "query_count": 50,
                 },
             ),
+            "BM_HnswSearch/count:10000/dimension:128/top_k:10/M:16/ef_construction:200/ef_search:50/query_count:50": (
+                "hnsw_search",
+                "Cosine",
+                {
+                    "count": 10000,
+                    "dimension": 128,
+                    "top_k": 10,
+                    "M": 16,
+                    "ef_construction": 200,
+                    "ef_search": 50,
+                    "query_count": 50,
+                },
+            ),
             "BM_Glove25FlatSearch/top_k:10/query_pool:1000": (
                 "glove_flat_search",
                 "Cosine",
@@ -75,6 +88,18 @@ class ReportTestCase(unittest.TestCase):
                     "num_tables": 8,
                     "num_bits": 12,
                     "num_candidates": 1000,
+                    "query_pool": 1000,
+                    "recall_queries": 1000,
+                },
+            ),
+            "BM_AnnHnswSearch/top_k:10/M:16/ef_construction:200/ef_search:50/query_pool:1000/recall_queries:1000": (
+                "ann_hnsw_search",
+                None,
+                {
+                    "top_k": 10,
+                    "M": 16,
+                    "ef_construction": 200,
+                    "ef_search": 50,
                     "query_pool": 1000,
                     "recall_queries": 1000,
                 },

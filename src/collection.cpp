@@ -21,6 +21,8 @@ std::unique_ptr<Index> make_index(const VectorStore &vectors, Metric metric,
             }
             return std::make_unique<RandomProjectionLshIndex>(vectors, metric,
                                                               options.lsh);
+        case IndexKind::Hnsw:
+            return std::make_unique<HnswIndex>(vectors, metric, options.hnsw);
     }
 
     throw std::invalid_argument("Unsupported index kind");
@@ -166,5 +168,7 @@ IndexKind Collection::index_kind() const { return options_.index_kind; }
 const RandomProjectionLshConfig &Collection::lsh_config() const {
     return options_.lsh;
 }
+
+const HnswConfig &Collection::hnsw_config() const { return options_.hnsw; }
 
 }  // namespace vectordb

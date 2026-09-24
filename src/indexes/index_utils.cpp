@@ -9,10 +9,6 @@
 namespace vectordb::index_detail {
 namespace {
 
-bool higher_is_better(Metric metric) {
-    return metric == Metric::Dot || metric == Metric::Cosine;
-}
-
 bool is_better_result(const InternalSearchResult &a,
                       const InternalSearchResult &b, bool higher_is_better) {
     if (a.score == b.score) {
@@ -76,6 +72,10 @@ float score_vector(Metric metric, const float *a, const float *b,
     }
 
     throw std::invalid_argument("Unsupported metric");
+}
+
+bool higher_is_better(Metric metric) {
+    return metric == Metric::Dot || metric == Metric::Cosine;
 }
 
 }  // namespace vectordb::index_detail

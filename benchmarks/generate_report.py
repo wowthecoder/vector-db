@@ -43,6 +43,15 @@ PARAMETER_ORDER = {
         "num_candidates",
         "query_count",
     ),
+    "hnsw_search": (
+        "count",
+        "dimension",
+        "top_k",
+        "M",
+        "ef_construction",
+        "ef_search",
+        "query_count",
+    ),
     "glove_flat_search": ("top_k", "query_pool"),
     "glove_lsh_search": (
         "top_k",
@@ -61,6 +70,14 @@ PARAMETER_ORDER = {
         "query_pool",
         "recall_queries",
     ),
+    "ann_hnsw_search": (
+        "top_k",
+        "M",
+        "ef_construction",
+        "ef_search",
+        "query_pool",
+        "recall_queries",
+    ),
     "batch_search": ("count", "dimension", "query_count", "top_k"),
     "repeated_search": ("count", "dimension", "query_count", "top_k"),
 }
@@ -68,17 +85,19 @@ OPERATION_NAMES = {
     "insert": "Insert",
     "search": "Single search",
     "lsh_search": "LSH search",
+    "hnsw_search": "HNSW search",
     "glove_flat_search": "GloVe-25 Flat search",
     "glove_lsh_search": "GloVe-25 LSH search",
     "ann_flat_search": "Flat search",
     "ann_lsh_search": "LSH search",
+    "ann_hnsw_search": "HNSW search",
     "batch_search": "Batch search",
     "repeated_search": "Repeated single search",
     "save": "Save",
     "load": "Load",
     "unknown": "Unknown",
 }
-ANN_OPERATIONS = {"ann_flat_search", "ann_lsh_search", "glove_flat_search", "glove_lsh_search"}
+ANN_OPERATIONS = {"ann_flat_search", "ann_lsh_search", "ann_hnsw_search", "glove_flat_search", "glove_lsh_search"}
 
 
 class ReportError(ValueError):
@@ -140,6 +159,11 @@ def parse_benchmark_name(name: str) -> tuple[str, str | None, dict[str, int | fl
         operation = "ann_lsh_search"
     elif function.startswith("BM_RandomProjectionLshSearch"):
         operation = "lsh_search"
+        metric = "Cosine"
+    elif function.startswith("BM_AnnHnswSearch"):
+        operation = "ann_hnsw_search"
+    elif function.startswith("BM_HnswSearch"):
+        operation = "hnsw_search"
         metric = "Cosine"
     elif function.startswith("BM_CollectionBatchSearch"):
         operation = "batch_search"

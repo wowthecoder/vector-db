@@ -20,6 +20,19 @@ vectordb::CollectionOptions lsh_options() {
     };
 }
 
+vectordb::CollectionOptions hnsw_options() {
+    return {
+        .index_kind = vectordb::IndexKind::Hnsw,
+        .hnsw =
+            {
+                .M = 8,
+                .ef_construction = 32,
+                .ef_search = 16,
+                .seed = 42,
+            },
+    };
+}
+
 }  // namespace
 
 TEST(CollectionTest, EmptySearchReturnsNoResults) {
@@ -237,4 +250,75 @@ TEST(CollectionTest, RejectsUnsupportedLshMetrics) {
                  std::invalid_argument);
     EXPECT_THROW(vectordb::Collection(2, vectordb::Metric::Dot, lsh_options()),
                  std::invalid_argument);
+}
+
+TEST(CollectionTest, SearchesWithHnswIndex) {
+    vectordb::Collection collection(2, vectordb::Metric::L2, hnsw_options());
+
+    collection.insert("same", std::vector<float>{1.0f, 0.0f});
+    collection.insert("far", std::vector<float>{10.0f, 0.0f});
+
+    const auto results = collection.search(std::vector<float>{1.0f, 0.0f}, 2);
+
+    ASSERT_FALSE(results.empty());
+    EXPECT_EQ(results.front().external_id, "same");
+    EXPECT_EQ(results.front().internal_id, 0);
+    EXPECT_NEAR(results.front().score, 0.0f, 0.0001f);
+    EXPECT_EQ(collection.index_kind(), vectordb::IndexKind::Hnsw);
+    EXPECT_EQ(collection.hnsw_config().M, 8);
+    EXPECT_EQ(collection.hnsw_config().ef_construction, 32);
+    EXPECT_EQ(collection.hnsw_config().ef_search, 16);
+    EXPECT_EQ(collection.hnsw_config().seed, 42);
+}
+
+TEST(CollectionTest, MakesNewInsertsImmediatelySearchableByHnsw) {
+    vectordb::Collection collection(2, vectordb::Metric::L2, hnsw_options());
+
+    collection.insert("first", std::vector<float>{1.0f, 0.0f});
+    const auto first_results =
+        collection.search(std::vector<float>{1.0f, 0.0f}, 1);
+    ASSERT_EQ(first_results.size(), 1);
+    EXPECT_EQ(first_results.front().external_id, "first");
+
+    collection.insert("second", std::vector<float>{0.0f, 1.0f});
+    const auto second_results =
+        collection.search(std::vector<float>{0.0f, 1.0f}, 1);
+
+    ASSERT_EQ(second_results.size(), 1);
+    EXPECT_EQ(second_results.front().external_id, "second");
+}
+
+TEST(CollectionTest, BatchSearchWorksWithHnswIndex) {
+    vectordb::Collection collection(2, vectordb::Metric::L2, hnsw_options());
+    collection.insert("x", std::vector<float>{1.0f, 0.0f});
+    collection.insert("y", std::vector<float>{0.0f, 1.0f});
+
+    const std::vector<float> queries{
+        1.0f,
+        0.0f,
+        0.0f,
+        1.0f,
+    };
+    const auto results = collection.batch_search(queries, 1);
+
+    ASSERT_EQ(results.size(), 2);
+    ASSERT_EQ(results[0].size(), 1);
+    ASSERT_EQ(results[1].size(), 1);
+    EXPECT_EQ(results[0].front().external_id, "x");
+    EXPECT_EQ(results[1].front().external_id, "y");
+}
+
+TEST(CollectionTest, SupportsHnswAcrossAllMetrics) {
+    for (const vectordb::Metric metric :
+        {vectordb::Metric::L2, vectordb::Metric::Dot,
+         vectordb::Metric::Cosine}) {
+        vectordb::Collection collection(2, metric, hnsw_options());
+        collection.insert("same", std::vector<float>{1.0f, 0.0f});
+        collection.insert("orthogonal", std::vector<float>{0.0f, 1.0f});
+
+        const auto results =
+            collection.search(std::vector<float>{1.0f, 0.0f}, 1);
+        ASSERT_EQ(results.size(), 1);
+        EXPECT_EQ(results.front().external_id, "same");
+    }
 }

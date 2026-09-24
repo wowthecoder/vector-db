@@ -14,6 +14,7 @@
 
 #include "ann_dataset.hpp"
 #include "vectordb/indexes/flat_index.hpp"
+#include "vectordb/indexes/hnsw_index.hpp"
 #include "vectordb/indexes/random_projection_lsh_index.hpp"
 #include "vectordb/types.hpp"
 
@@ -228,6 +229,87 @@ void BM_AnnLshSearch(benchmark::State &state) {
     state.counters["lsh_build_ms"] = build_ms;
 }
 
+void BM_AnnHnswSearch(benchmark::State &state) {
+    const auto *dataset = get_dataset(state);
+    if (dataset == nullptr) {
+        return;
+    }
+
+    const auto top_k = static_cast<std::size_t>(state.range(0));
+    const auto m = static_cast<std::size_t>(state.range(1));
+    const auto ef_construction = static_cast<std::size_t>(state.range(2));
+    const auto ef_search = static_cast<std::size_t>(state.range(3));
+    const auto requested_query_pool = static_cast<std::size_t>(state.range(4));
+    const auto requested_recall_queries =
+        static_cast<std::size_t>(state.range(5));
+
+    if (top_k > dataset->neighbors_per_query()) {
+        state.SkipWithError(
+            "top_k exceeds the dataset's ground-truth neighbor count");
+        return;
+    }
+
+    const std::size_t query_pool =
+        std::min(requested_query_pool, dataset->query_count());
+    const std::size_t recall_queries =
+        std::min(requested_recall_queries, dataset->query_count());
+    if (query_pool == 0 || recall_queries == 0) {
+        state.SkipWithError(
+            "query pool and recall query count must both be nonzero");
+        return;
+    }
+
+    const vectordb::HnswConfig config{
+        .M = m,
+        .ef_construction = ef_construction,
+        .ef_search = ef_search,
+        .seed = kProjectionSeed,
+    };
+    vectordb::HnswIndex index(dataset->vectors(), dataset->metric(), config);
+
+    const auto build_start = std::chrono::steady_clock::now();
+    index.build();
+    const auto build_end = std::chrono::steady_clock::now();
+    const double build_ms =
+        std::chrono::duration<double, std::milli>(build_end - build_start)
+            .count();
+
+    const double recall =
+        measure_recall(*dataset, index, top_k, recall_queries);
+
+    std::size_t query_index = 0;
+    for (auto _ : state) {
+        auto results = index.search(dataset->query(query_index), top_k);
+        benchmark::DoNotOptimize(results);
+        query_index = (query_index + 1) % query_pool;
+    }
+
+    set_common_counters(state, *dataset, recall_queries, recall);
+    state.counters["index_build_ms"] = build_ms;
+    state.counters["hnsw_build_ms"] = build_ms;
+}
+
+void apply_ann_hnsw_arguments(benchmark::internal::Benchmark *benchmark) {
+    benchmark
+        ->ArgNames({"top_k", "M", "ef_construction", "ef_search",
+                    "query_pool", "recall_queries"})
+
+        // Baseline.
+        ->Args({10, 16, 200, 50, 100, 1'000})
+
+        // M scaling.
+        ->Args({10, 8, 200, 50, 100, 1'000})
+        ->Args({10, 32, 200, 50, 100, 1'000})
+
+        // ef_construction scaling.
+        ->Args({10, 16, 100, 50, 100, 1'000})
+        ->Args({10, 16, 400, 50, 100, 1'000})
+
+        // ef_search scaling.
+        ->Args({10, 16, 200, 10, 100, 1'000})
+        ->Args({10, 16, 200, 200, 100, 1'000});
+}
+
 void apply_ann_lsh_arguments(benchmark::internal::Benchmark *benchmark) {
     benchmark
         ->ArgNames({"top_k", "num_tables", "num_bits", "num_candidates",
@@ -255,5 +337,10 @@ BENCHMARK(BM_AnnFlatSearch)
 
 BENCHMARK(BM_AnnLshSearch)
     ->Apply(apply_ann_lsh_arguments)
+    ->Iterations(100)
+    ->Unit(benchmark::kMicrosecond);
+
+BENCHMARK(BM_AnnHnswSearch)
+    ->Apply(apply_ann_hnsw_arguments)
     ->Iterations(100)
     ->Unit(benchmark::kMicrosecond);
