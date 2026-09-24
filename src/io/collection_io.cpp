@@ -12,7 +12,7 @@
 namespace {
 constexpr std::array<char, 8> k_magic_bytes{'V', 'D', 'B', 'C',
                                             'O', 'L', 'L', '\0'};
-constexpr std::uint32_t k_current_version = 2;
+constexpr std::uint32_t k_current_version = 3;
 constexpr std::uint32_t k_oldest_supported_version = 1;
 // Format safety limits checked before allocating data from an input file.
 constexpr std::uint64_t k_max_dimension = 65536;
@@ -22,6 +22,8 @@ constexpr std::uint64_t k_max_lsh_tables =
     vectordb::RandomProjectionLshConfig::max_num_tables;
 constexpr std::uint64_t k_max_lsh_bits = 64;
 constexpr std::uint64_t k_max_lsh_candidates = k_max_vector_count;
+constexpr std::uint64_t k_max_hnsw_m = vectordb::HnswConfig::max_M;
+constexpr std::uint64_t k_max_hnsw_ef = k_max_vector_count;
 
 /*
 Common header, little-endian:
@@ -32,15 +34,27 @@ dimension: uint64
 vector count: uint64
 
 Format v2 then adds:
-index kind: uint32 (0 for Flat, 1 for RandomProjectionLsh)
+index kind: uint32 (0 for Flat, 1 for RandomProjectionLsh, 2 for Hnsw)
 LSH number of tables: uint64
 LSH bits per table: uint64
 LSH candidate limit: uint64
 LSH seed: uint64
 
+Format v3 then adds:
+HNSW M: uint64
+HNSW ef_construction: uint64
+HNSW ef_search: uint64
+HNSW seed: uint64
+
 Format v1 has no index metadata and always loads as Flat.
 
-Both versions then store:
+The HNSW graph itself is never serialized. Loading replays every insert()
+through Collection, which drives HnswIndex::add() in the same internal-ID
+order used to build the file; with the stored seed this deterministically
+reconstructs the exact same graph, matching how LSH persists as
+configuration only.
+
+All versions then store:
 for every vector, write the following:
     external id byte length: uint32
     external id bytes
@@ -114,8 +128,8 @@ std::uint64_t read_u64(std::istream &in) {
     return value;
 }
 
-std::size_t checked_lsh_size(std::uint64_t value, std::uint64_t maximum,
-                             const std::string &name) {
+std::size_t checked_bounded_size(std::uint64_t value, std::uint64_t maximum,
+                                 const std::string &name) {
     if (value == 0) {
         throw std::runtime_error(name + " must be greater than zero");
     }
@@ -182,6 +196,9 @@ void Collection::save(const std::filesystem::path &path) const {
         case IndexKind::RandomProjectionLsh:
             index_code = 1;
             break;
+        case IndexKind::Hnsw:
+            index_code = 2;
+            break;
         default:
             throw std::runtime_error("Unsupported collection index kind");
     }
@@ -201,12 +218,30 @@ void Collection::save(const std::filesystem::path &path) const {
             "LSH candidate limit exceeds maximum supported value of " +
             std::to_string(k_max_lsh_candidates));
     }
+    if (options_.hnsw.M > k_max_hnsw_m) {
+        throw std::runtime_error("HNSW M exceeds maximum supported value of " +
+                                 std::to_string(k_max_hnsw_m));
+    }
+    if (options_.hnsw.ef_construction > k_max_hnsw_ef) {
+        throw std::runtime_error(
+            "HNSW ef_construction exceeds maximum supported value of " +
+            std::to_string(k_max_hnsw_ef));
+    }
+    if (options_.hnsw.ef_search > k_max_hnsw_ef) {
+        throw std::runtime_error(
+            "HNSW ef_search exceeds maximum supported value of " +
+            std::to_string(k_max_hnsw_ef));
+    }
 
     write_u32(out, index_code);
     write_u64(out, static_cast<std::uint64_t>(options_.lsh.num_tables));
     write_u64(out, static_cast<std::uint64_t>(options_.lsh.num_bits_per_table));
     write_u64(out, static_cast<std::uint64_t>(options_.lsh.num_candidates));
     write_u64(out, options_.lsh.seed);
+    write_u64(out, static_cast<std::uint64_t>(options_.hnsw.M));
+    write_u64(out, static_cast<std::uint64_t>(options_.hnsw.ef_construction));
+    write_u64(out, static_cast<std::uint64_t>(options_.hnsw.ef_search));
+    write_u64(out, options_.hnsw.seed);
 
     for (std::uint64_t internal_id = 0; internal_id < size(); ++internal_id) {
         const std::string &external_id =
@@ -291,15 +326,18 @@ std::unique_ptr<Collection> Collection::load(
             case 1:
                 options.index_kind = IndexKind::RandomProjectionLsh;
                 break;
+            case 2:
+                options.index_kind = IndexKind::Hnsw;
+                break;
             default:
                 throw std::runtime_error("Invalid collection index kind code");
         }
 
-        options.lsh.num_tables =
-            checked_lsh_size(read_u64(in), k_max_lsh_tables, "LSH table count");
-        options.lsh.num_bits_per_table = checked_lsh_size(
+        options.lsh.num_tables = checked_bounded_size(
+            read_u64(in), k_max_lsh_tables, "LSH table count");
+        options.lsh.num_bits_per_table = checked_bounded_size(
             read_u64(in), k_max_lsh_bits, "LSH bits per table");
-        options.lsh.num_candidates = checked_lsh_size(
+        options.lsh.num_candidates = checked_bounded_size(
             read_u64(in), k_max_lsh_candidates, "LSH candidate limit");
         options.lsh.seed = read_u64(in);
 
@@ -308,6 +346,20 @@ std::unique_ptr<Collection> Collection::load(
             throw std::runtime_error(
                 "Random-projection LSH requires cosine metric");
         }
+        if (options.index_kind == IndexKind::Hnsw && version < 3) {
+            throw std::runtime_error(
+                "HNSW index kind requires format version 3 or later");
+        }
+    }
+
+    if (version >= 3) {
+        options.hnsw.M =
+            checked_bounded_size(read_u64(in), k_max_hnsw_m, "HNSW M");
+        options.hnsw.ef_construction = checked_bounded_size(
+            read_u64(in), k_max_hnsw_ef, "HNSW ef_construction");
+        options.hnsw.ef_search = checked_bounded_size(
+            read_u64(in), k_max_hnsw_ef, "HNSW ef_search");
+        options.hnsw.seed = read_u64(in);
     }
 
     auto collection = std::make_unique<Collection>(dimension, metric, options);

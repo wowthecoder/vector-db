@@ -16,6 +16,7 @@ option(VECTORDB_BUILD_CLI "Build CLI" OFF)
 add_library(vectordb
     src/distance.cpp
     src/indexes/flat_index.cpp
+    src/indexes/hnsw_index.cpp
     src/indexes/index_utils.cpp
     src/indexes/inverted_file_flat_index.cpp
     src/indexes/random_projection_lsh_index.cpp

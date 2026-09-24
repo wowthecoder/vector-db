@@ -19,7 +19,7 @@ constexpr std::streamoff k_dimension_offset = 16;
 constexpr std::streamoff k_count_offset = 24;
 constexpr std::streamoff k_index_kind_offset = 32;
 constexpr std::streamoff k_lsh_tables_offset = 36;
-constexpr std::streamoff k_first_record_offset = 68;
+constexpr std::streamoff k_first_record_offset = 100;
 
 std::string little_endian_u32(std::uint32_t value) {
     std::string bytes(4, '\0');
@@ -201,6 +201,45 @@ TEST(PersistenceTest, RoundTripPreservesLshConfigurationAndResults) {
     }
 }
 
+TEST(PersistenceTest, RoundTripPreservesHnswConfigurationAndResults) {
+    const TemporaryFile file("hnsw_round_trip");
+    const vectordb::CollectionOptions options{
+        .index_kind = vectordb::IndexKind::Hnsw,
+        .hnsw =
+            {
+                .M = 8,
+                .ef_construction = 32,
+                .ef_search = 16,
+                .seed = 1234,
+            },
+    };
+    vectordb::Collection original(2, vectordb::Metric::L2, options);
+    original.insert("x", std::vector<float>{1.0f, 0.0f});
+    original.insert("y", std::vector<float>{0.0f, 1.0f});
+    original.insert("far", std::vector<float>{10.0f, 0.0f});
+
+    const std::vector<float> query{1.0f, 0.0f};
+    const auto expected = original.search(query, 3);
+
+    original.save(file.path());
+    const auto loaded = vectordb::Collection::load(file.path());
+
+    ASSERT_NE(loaded, nullptr);
+    EXPECT_EQ(loaded->index_kind(), vectordb::IndexKind::Hnsw);
+    EXPECT_EQ(loaded->hnsw_config().M, 8);
+    EXPECT_EQ(loaded->hnsw_config().ef_construction, 32);
+    EXPECT_EQ(loaded->hnsw_config().ef_search, 16);
+    EXPECT_EQ(loaded->hnsw_config().seed, 1234);
+
+    const auto actual = loaded->search(query, 3);
+    ASSERT_EQ(actual.size(), expected.size());
+    for (std::size_t i = 0; i < expected.size(); ++i) {
+        EXPECT_EQ(actual[i].external_id, expected[i].external_id);
+        EXPECT_EQ(actual[i].internal_id, expected[i].internal_id);
+        EXPECT_FLOAT_EQ(actual[i].score, expected[i].score);
+    }
+}
+
 TEST(PersistenceTest, LoadsVersionOneFilesAsFlatCollections) {
     const TemporaryFile file("legacy_v1");
     write_legacy_v1_collection(file.path());
@@ -257,7 +296,7 @@ TEST(PersistenceTest, LoadRejectsUnsupportedVersion) {
     const vectordb::Collection collection(2, vectordb::Metric::L2);
     collection.save(file.path());
     overwrite_bytes(file.path(), k_version_offset,
-                    std::string{'\x03', '\0', '\0', '\0'});
+                    std::string{'\x04', '\0', '\0', '\0'});
 
     EXPECT_THROW(vectordb::Collection::load(file.path()), std::runtime_error);
 }

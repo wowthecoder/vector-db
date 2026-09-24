@@ -19,6 +19,7 @@ add_executable(vectordb_benchmarks
     batch_search_benchmarks.cpp
     benchmark_utils.cpp
     glove_25_benchmarks.cpp
+    hnsw_recall_benchmarks.cpp
     insert_benchmarks.cpp
     lsh_recall_benchmarks.cpp
     persistence_benchmarks.cpp
