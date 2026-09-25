@@ -92,9 +92,9 @@ class ReportTestCase(unittest.TestCase):
                     "recall_queries": 1000,
                 },
             ),
-            "BM_Glove25HnswSearch/top_k:10/M:16/ef_construction:200/ef_search:50/query_pool:1000/recall_queries:1000": (
-                "glove_hnsw_search",
-                "Cosine",
+            "BM_AnnHnswSearch/top_k:10/M:16/ef_construction:200/ef_search:50/query_pool:1000/recall_queries:1000": (
+                "ann_hnsw_search",
+                None,
                 {
                     "top_k": 10,
                     "M": 16,

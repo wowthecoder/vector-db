@@ -18,7 +18,21 @@ namespace {
 constexpr std::array<char, 8> kMagic{'V', 'D', 'B', 'A', 'N', 'N', '0', '1'};
 constexpr std::uint32_t kFormatVersion = 1;
 constexpr std::uint32_t kAngularDistance = 1;
+constexpr std::uint32_t kEuclideanDistance = 2;
 constexpr std::size_t kTrainingChunkRows = 16'384;
+
+Metric metric_for_distance_code(std::uint32_t distance) {
+    switch (distance) {
+        case kAngularDistance:
+            return Metric::Cosine;
+        case kEuclideanDistance:
+            return Metric::L2;
+        default:
+            throw std::runtime_error(
+                "Prepared ANN dataset uses an unsupported distance code: " +
+                std::to_string(distance));
+    }
+}
 
 struct FileHeader {
     std::uint32_t version;
@@ -60,7 +74,8 @@ void read_exact(std::ifstream &input, T *destination, std::size_t count,
 
 }  // namespace
 
-AnnDataset::AnnDataset(std::size_t dimension) : vectors_(dimension) {}
+AnnDataset::AnnDataset(std::size_t dimension, Metric metric)
+    : vectors_(dimension), metric_(metric) {}
 
 AnnDataset AnnDataset::load(const std::filesystem::path &path) {
     if constexpr (std::endian::native != std::endian::little) {
@@ -96,12 +111,9 @@ AnnDataset AnnDataset::load(const std::filesystem::path &path) {
         throw std::runtime_error(
             "Ground-truth neighbor count exceeds training vector count");
     }
-    if (header.distance != kAngularDistance) {
-        throw std::runtime_error(
-            "Prepared ANN dataset does not use angular distance");
-    }
+    const Metric metric = metric_for_distance_code(header.distance);
 
-    AnnDataset dataset(header.dimension);
+    AnnDataset dataset(header.dimension, metric);
     const std::size_t dimension = header.dimension;
     const std::size_t train_count =
         checked_size(header.train_count, 1, "training vector count");
@@ -163,6 +175,8 @@ std::size_t AnnDataset::query_count() const {
 std::size_t AnnDataset::neighbors_per_query() const {
     return neighbors_per_query_;
 }
+
+Metric AnnDataset::metric() const { return metric_; }
 
 std::span<const float> AnnDataset::query(std::size_t query_index) const {
     if (query_index >= query_count()) {

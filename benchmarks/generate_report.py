@@ -61,7 +61,16 @@ PARAMETER_ORDER = {
         "query_pool",
         "recall_queries",
     ),
-    "glove_hnsw_search": (
+    "ann_flat_search": ("top_k", "query_pool"),
+    "ann_lsh_search": (
+        "top_k",
+        "num_tables",
+        "num_bits",
+        "num_candidates",
+        "query_pool",
+        "recall_queries",
+    ),
+    "ann_hnsw_search": (
         "top_k",
         "M",
         "ef_construction",
@@ -79,13 +88,16 @@ OPERATION_NAMES = {
     "hnsw_search": "HNSW search",
     "glove_flat_search": "GloVe-25 Flat search",
     "glove_lsh_search": "GloVe-25 LSH search",
-    "glove_hnsw_search": "GloVe-25 HNSW search",
+    "ann_flat_search": "Flat search",
+    "ann_lsh_search": "LSH search",
+    "ann_hnsw_search": "HNSW search",
     "batch_search": "Batch search",
     "repeated_search": "Repeated single search",
     "save": "Save",
     "load": "Load",
     "unknown": "Unknown",
 }
+ANN_OPERATIONS = {"ann_flat_search", "ann_lsh_search", "ann_hnsw_search", "glove_flat_search", "glove_lsh_search"}
 
 
 class ReportError(ValueError):
@@ -109,6 +121,7 @@ class Result:
     cv_percent: float | None
     threads: int
     source: str
+    dataset: str | None = None
 
 
 def finite_number(value: Any) -> float | None:
@@ -140,12 +153,15 @@ def parse_benchmark_name(name: str) -> tuple[str, str | None, dict[str, int | fl
     elif function.startswith("BM_Glove25LshSearch"):
         operation = "glove_lsh_search"
         metric = "Cosine"
+    elif function.startswith("BM_AnnFlatSearch"):
+        operation = "ann_flat_search"
+    elif function.startswith("BM_AnnLshSearch"):
+        operation = "ann_lsh_search"
     elif function.startswith("BM_RandomProjectionLshSearch"):
         operation = "lsh_search"
         metric = "Cosine"
-    elif function.startswith("BM_Glove25HnswSearch"):
-        operation = "glove_hnsw_search"
-        metric = "Cosine"
+    elif function.startswith("BM_AnnHnswSearch"):
+        operation = "ann_hnsw_search"
     elif function.startswith("BM_HnswSearch"):
         operation = "hnsw_search"
         metric = "Cosine"
@@ -296,6 +312,40 @@ def load_results(path: Path) -> tuple[dict[str, Any], list[Result], list[str]]:
     results.sort(key=lambda result: result.name)
     context = document.get("context") if isinstance(document.get("context"), dict) else {}
     return dict(context), results, warnings
+
+
+def metric_from_dataset_label(label: str) -> str | None:
+    if label.endswith("-angular"):
+        return "Cosine"
+    if label.endswith("-euclidean"):
+        return "L2"
+    return None
+
+
+def load_merged_results(inputs: Sequence[tuple[str, Path]]) -> tuple[dict[str, Any], list[Result], list[str]]:
+    merged_context: dict[str, Any] = {}
+    merged_results: list[Result] = []
+    merged_warnings: list[str] = []
+    dataset_notes: list[str] = []
+    for index, (label, path) in enumerate(inputs):
+        context, results, warnings = load_results(path)
+        for result in results:
+            result.dataset = label
+            if result.operation in ANN_OPERATIONS:
+                result.metric = metric_from_dataset_label(label) or result.metric
+        merged_results.extend(results)
+        merged_warnings.extend(f"[{label}] {warning}" for warning in warnings)
+        if index == 0:
+            merged_context = context
+        host = context.get("host_name")
+        dataset_notes.append(f"{label} ({host})" if host else label)
+
+    if len(inputs) > 1:
+        merged_context = dict(merged_context)
+        merged_context["datasets_note"] = ", ".join(dataset_notes)
+
+    merged_results.sort(key=lambda result: (result.dataset or "", result.name))
+    return merged_context, merged_results, merged_warnings
 
 
 def preferred_value(results: Sequence[Result], key: str, preferred: int) -> int | float | str:
@@ -893,6 +943,8 @@ def context_cards(context: Mapping[str, Any], results: Sequence[Result]) -> str:
         ("Repetitions", min(result.repetitions for result in results)),
         ("Load average", ", ".join(fmt_number(float(value), 2) for value in context.get("load_avg", [])) or "Unknown"),
     ]
+    if context.get("datasets_note"):
+        cards.append(("Datasets", context["datasets_note"]))
     return '<div class="cards">' + "".join(f'<div class="card"><span>{escape(label)}</span><strong>{escape(value)}</strong></div>' for label, value in cards) + "</div>"
 
 

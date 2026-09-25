@@ -20,8 +20,8 @@
 
 namespace {
 
-#ifndef VECTORDB_GLOVE25_DEFAULT_PATH
-#define VECTORDB_GLOVE25_DEFAULT_PATH "benchmark-data/glove-25-angular.vdbann"
+#ifndef VECTORDB_ANN_DEFAULT_PATH
+#define VECTORDB_ANN_DEFAULT_PATH "benchmark-data/glove-25-angular.vdbann"
 #endif
 
 constexpr std::uint64_t kProjectionSeed = 1729;
@@ -33,11 +33,16 @@ struct CachedDataset {
 };
 
 std::filesystem::path dataset_path() {
-    const char *override_path =
+    const char *ann_dataset = std::getenv("VECTORDB_ANN_DATASET");
+    if (ann_dataset != nullptr && ann_dataset[0] != '\0') {
+        return std::filesystem::path(ann_dataset);
+    }
+    // Back-compat with the single-dataset GloVe-25 benchmark.
+    const char *legacy_path =
         std::getenv("VECTORDB_GLOVE25_PREPARED_DATASET");
-    return override_path != nullptr && override_path[0] != '\0'
-               ? std::filesystem::path(override_path)
-               : std::filesystem::path(VECTORDB_GLOVE25_DEFAULT_PATH);
+    return legacy_path != nullptr && legacy_path[0] != '\0'
+               ? std::filesystem::path(legacy_path)
+               : std::filesystem::path(VECTORDB_ANN_DEFAULT_PATH);
 }
 
 const CachedDataset &cached_dataset() {
@@ -48,10 +53,9 @@ const CachedDataset &cached_dataset() {
                 vectordb::benchmarks::AnnDataset::load(dataset_path()));
         } catch (const std::exception &error) {
             result.error = std::string(error.what()) +
-                           ". Prepare it with: python3 benchmarks/"
-                           "prepare_ann_dataset.py benchmark-data/"
-                           "glove-25-angular.hdf5 benchmark-data/"
-                           "glove-25-angular.vdbann";
+                           ". Prepare a dataset with: python3 benchmarks/"
+                           "prepare_ann_dataset.py --dataset <name>, then set "
+                           "VECTORDB_ANN_DATASET to its .vdbann path";
         }
         return result;
     }();
@@ -120,7 +124,7 @@ void set_common_counters(benchmark::State &state,
     state.counters["recall_at_k"] = recall;
 }
 
-void BM_Glove25FlatSearch(benchmark::State &state) {
+void BM_AnnFlatSearch(benchmark::State &state) {
     const auto *dataset = get_dataset(state);
     if (dataset == nullptr) {
         return;
@@ -141,8 +145,7 @@ void BM_Glove25FlatSearch(benchmark::State &state) {
         return;
     }
 
-    const vectordb::FlatIndex index(dataset->vectors(),
-                                    vectordb::Metric::Cosine);
+    const vectordb::FlatIndex index(dataset->vectors(), dataset->metric());
     const std::size_t validation_queries =
         std::min(kFlatValidationQueries, query_pool);
     const double recall =
@@ -159,9 +162,15 @@ void BM_Glove25FlatSearch(benchmark::State &state) {
     state.counters["index_build_ms"] = 0.0;
 }
 
-void BM_Glove25LshSearch(benchmark::State &state) {
+void BM_AnnLshSearch(benchmark::State &state) {
     const auto *dataset = get_dataset(state);
     if (dataset == nullptr) {
+        return;
+    }
+
+    if (dataset->metric() != vectordb::Metric::Cosine) {
+        state.SkipWithError(
+            "random-projection LSH currently only supports cosine datasets");
         return;
     }
 
@@ -196,7 +205,7 @@ void BM_Glove25LshSearch(benchmark::State &state) {
         .seed = kProjectionSeed,
     };
     vectordb::RandomProjectionLshIndex index(dataset->vectors(),
-                                             vectordb::Metric::Cosine, config);
+                                             dataset->metric(), config);
 
     const auto build_start = std::chrono::steady_clock::now();
     index.build();
@@ -220,7 +229,7 @@ void BM_Glove25LshSearch(benchmark::State &state) {
     state.counters["lsh_build_ms"] = build_ms;
 }
 
-void BM_Glove25HnswSearch(benchmark::State &state) {
+void BM_AnnHnswSearch(benchmark::State &state) {
     const auto *dataset = get_dataset(state);
     if (dataset == nullptr) {
         return;
@@ -256,8 +265,7 @@ void BM_Glove25HnswSearch(benchmark::State &state) {
         .ef_search = ef_search,
         .seed = kProjectionSeed,
     };
-    vectordb::HnswIndex index(dataset->vectors(), vectordb::Metric::Cosine,
-                              config);
+    vectordb::HnswIndex index(dataset->vectors(), dataset->metric(), config);
 
     const auto build_start = std::chrono::steady_clock::now();
     index.build();
@@ -281,7 +289,7 @@ void BM_Glove25HnswSearch(benchmark::State &state) {
     state.counters["hnsw_build_ms"] = build_ms;
 }
 
-void apply_glove_hnsw_arguments(benchmark::internal::Benchmark *benchmark) {
+void apply_ann_hnsw_arguments(benchmark::internal::Benchmark *benchmark) {
     benchmark
         ->ArgNames({"top_k", "M", "ef_construction", "ef_search",
                     "query_pool", "recall_queries"})
@@ -302,41 +310,37 @@ void apply_glove_hnsw_arguments(benchmark::internal::Benchmark *benchmark) {
         ->Args({10, 16, 200, 200, 100, 1'000});
 }
 
-void apply_glove_lsh_arguments(benchmark::internal::Benchmark *benchmark) {
+void apply_ann_lsh_arguments(benchmark::internal::Benchmark *benchmark) {
     benchmark
         ->ArgNames({"top_k", "num_tables", "num_bits", "num_candidates",
                     "query_pool", "recall_queries"})
 
-        // Baseline.
-        ->Args({10, 8, 12, 1'000, 100, 1'000})
-
-        // Hash-table scaling.
-        ->Args({10, 4, 12, 1'000, 100, 1'000})
-        ->Args({10, 16, 12, 1'000, 100, 1'000})
-
-        // Signature-width scaling.
-        ->Args({10, 8, 10, 1'000, 100, 1'000})
-        ->Args({10, 8, 14, 1'000, 100, 1'000})
-
-        // Candidate-limit scaling.
+        // Sweep the effort knob (num_candidates) at fixed table count and
+        // signature width so the QPS-vs-recall curve spans low to high
+        // recall for the Pareto plot.
+        ->Args({10, 8, 12, 50, 100, 1'000})
         ->Args({10, 8, 12, 100, 100, 1'000})
+        ->Args({10, 8, 12, 250, 100, 1'000})
+        ->Args({10, 8, 12, 500, 100, 1'000})
+        ->Args({10, 8, 12, 1'000, 100, 1'000})
+        ->Args({10, 8, 12, 2'500, 100, 1'000})
         ->Args({10, 8, 12, 5'000, 100, 1'000});
 }
 
 }  // namespace
 
-BENCHMARK(BM_Glove25FlatSearch)
+BENCHMARK(BM_AnnFlatSearch)
     ->ArgNames({"top_k", "query_pool"})
     ->Args({10, 100})
     ->Iterations(100)
     ->Unit(benchmark::kMillisecond);
 
-BENCHMARK(BM_Glove25LshSearch)
-    ->Apply(apply_glove_lsh_arguments)
+BENCHMARK(BM_AnnLshSearch)
+    ->Apply(apply_ann_lsh_arguments)
     ->Iterations(100)
     ->Unit(benchmark::kMicrosecond);
 
-BENCHMARK(BM_Glove25HnswSearch)
-    ->Apply(apply_glove_hnsw_arguments)
+BENCHMARK(BM_AnnHnswSearch)
+    ->Apply(apply_ann_hnsw_arguments)
     ->Iterations(100)
     ->Unit(benchmark::kMicrosecond);
